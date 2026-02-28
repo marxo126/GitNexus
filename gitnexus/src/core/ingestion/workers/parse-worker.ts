@@ -11,9 +11,16 @@ import Go from 'tree-sitter-go';
 import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
+import { createRequire } from 'node:module';
 import { SupportedLanguages } from '../../../config/supported-languages.js';
+
+// tree-sitter-swift is an optionalDependency — may not be installed
+const _require = createRequire(import.meta.url);
+let Swift: any = null;
+try { Swift = _require('tree-sitter-swift'); } catch {}
 import { LANGUAGE_QUERIES } from '../tree-sitter-queries.js';
 import { getLanguageFromFilename } from '../utils.js';
+import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 
 // ============================================================================
@@ -30,6 +37,8 @@ interface ParsedNode {
     endLine: number;
     language: string;
     isExported: boolean;
+    astFrameworkMultiplier?: number;
+    astFrameworkReason?: string;
     description?: string;
   };
 }
@@ -105,6 +114,7 @@ const languageMap: Record<string, any> = {
   [SupportedLanguages.Rust]: Rust,
   [SupportedLanguages.PHP]: PHP.php_only,
   [SupportedLanguages.Ruby]: Ruby,
+  ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
 };
 
 const setLanguage = (language: SupportedLanguages, filePath: string): void => {
@@ -190,6 +200,16 @@ const isNodeExported = (node: any, name: string, language: string): boolean => {
     case 'cpp':
       return false;
 
+    case 'swift':
+      while (current) {
+        if (current.type === 'modifiers' || current.type === 'visibility_modifier') {
+          const text = current.text || '';
+          if (text.includes('public') || text.includes('open')) return true;
+        }
+        current = current.parent;
+      }
+      return false;
+
     case 'php':
       // Top-level classes/interfaces/traits are always accessible
       // Methods/properties are exported only if they have 'public' modifier
@@ -230,6 +250,7 @@ const FUNCTION_NODE_TYPES = new Set([
   'anonymous_function_creation_expression',  // PHP anonymous functions
   'method',           // Ruby: def foo
   'singleton_method', // Ruby: def self.foo
+  'init_declaration', 'deinit_declaration',  // Swift initializers/deinitializers
 ]);
 
 /** Walk up AST to find enclosing function, return its generateId or null for top-level */
@@ -239,6 +260,12 @@ const findEnclosingFunctionId = (node: any, filePath: string): string | null => 
     if (FUNCTION_NODE_TYPES.has(current.type)) {
       let funcName: string | null = null;
       let label = 'Function';
+
+      if (current.type === 'init_declaration' || current.type === 'deinit_declaration') {
+        const funcName = current.type === 'init_declaration' ? 'init' : 'deinit';
+        const label = 'Constructor';
+        return generateId(label, `${filePath}:${funcName}`);
+      }
 
       if (['function_declaration', 'function_definition', 'async_function_declaration',
            'generator_function_declaration', 'function_item'].includes(current.type)) {
@@ -371,6 +398,37 @@ const BUILT_INS = new Set([
   'any?', 'all?', 'none?', 'count', 'first', 'last',
   'sort', 'sort_by', 'min', 'max', 'min_by', 'max_by',
   'group_by', 'partition', 'zip', 'compact', 'flatten', 'uniq',
+  // Swift/iOS built-ins and standard library
+  'print', 'debugPrint', 'dump', 'fatalError', 'precondition', 'preconditionFailure',
+  'assert', 'assertionFailure', 'NSLog',
+  'abs', 'min', 'max', 'zip', 'stride', 'sequence', 'repeatElement',
+  'swap', 'withUnsafePointer', 'withUnsafeMutablePointer', 'withUnsafeBytes',
+  'autoreleasepool', 'unsafeBitCast', 'unsafeDowncast', 'numericCast',
+  'type', 'MemoryLayout',
+  // Swift collection/string methods (common noise)
+  'map', 'flatMap', 'compactMap', 'filter', 'reduce', 'forEach', 'contains',
+  'first', 'last', 'prefix', 'suffix', 'dropFirst', 'dropLast',
+  'sorted', 'reversed', 'enumerated', 'joined', 'split',
+  'append', 'insert', 'remove', 'removeAll', 'removeFirst', 'removeLast',
+  'isEmpty', 'count', 'index', 'startIndex', 'endIndex',
+  // UIKit/Foundation common methods (noise in call graph)
+  'addSubview', 'removeFromSuperview', 'layoutSubviews', 'setNeedsLayout',
+  'layoutIfNeeded', 'setNeedsDisplay', 'invalidateIntrinsicContentSize',
+  'addTarget', 'removeTarget', 'addGestureRecognizer',
+  'addConstraint', 'addConstraints', 'removeConstraint', 'removeConstraints',
+  'NSLocalizedString', 'Bundle',
+  'reloadData', 'reloadSections', 'reloadRows', 'performBatchUpdates',
+  'register', 'dequeueReusableCell', 'dequeueReusableSupplementaryView',
+  'beginUpdates', 'endUpdates', 'insertRows', 'deleteRows', 'insertSections', 'deleteSections',
+  'present', 'dismiss', 'pushViewController', 'popViewController', 'popToRootViewController',
+  'performSegue', 'prepare',
+  // GCD / async
+  'DispatchQueue', 'async', 'sync', 'asyncAfter',
+  'Task', 'withCheckedContinuation', 'withCheckedThrowingContinuation',
+  // Combine
+  'sink', 'store', 'assign', 'receive', 'subscribe',
+  // Notification / KVO
+  'addObserver', 'removeObserver', 'post', 'NotificationCenter',
 ]);
 
 // ============================================================================
@@ -405,6 +463,38 @@ const getLabelFromCaptures = (captureMap: Record<string, any>): string | null =>
   if (captureMap['definition.constructor']) return 'Constructor';
   if (captureMap['definition.template']) return 'Template';
   return 'CodeElement';
+};
+
+const getDefinitionNodeFromCaptures = (captureMap: Record<string, any>): any | null => {
+  const definitionKeys = [
+    'definition.function',
+    'definition.class',
+    'definition.interface',
+    'definition.method',
+    'definition.struct',
+    'definition.enum',
+    'definition.namespace',
+    'definition.module',
+    'definition.trait',
+    'definition.impl',
+    'definition.type',
+    'definition.const',
+    'definition.static',
+    'definition.typedef',
+    'definition.macro',
+    'definition.union',
+    'definition.property',
+    'definition.record',
+    'definition.delegate',
+    'definition.annotation',
+    'definition.constructor',
+    'definition.template',
+  ];
+
+  for (const key of definitionKeys) {
+    if (captureMap[key]) return captureMap[key];
+  }
+  return null;
 };
 
 // ============================================================================
@@ -806,6 +896,11 @@ const processFileGroup = (
         }
       }
 
+      const definitionNode = getDefinitionNodeFromCaptures(captureMap);
+      const frameworkHint = definitionNode
+        ? detectFrameworkFromAST(language, definitionNode.text || '')
+        : null;
+
       result.nodes.push({
         id: nodeId,
         label: nodeLabel,
@@ -816,6 +911,10 @@ const processFileGroup = (
           endLine: nameNode.endPosition.row,
           language: language,
           isExported: isNodeExported(nameNode, nodeName, language),
+          ...(frameworkHint ? {
+            astFrameworkMultiplier: frameworkHint.entryPointMultiplier,
+            astFrameworkReason: frameworkHint.reason,
+          } : {}),
           ...(description !== undefined ? { description } : {}),
         },
       });

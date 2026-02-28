@@ -40,6 +40,9 @@ const FUNCTION_NODE_TYPES = new Set([
   // Ruby
   'method',           // def foo
   'singleton_method', // def self.foo
+  // Swift
+  'init_declaration',
+  'deinit_declaration',
 ]);
 
 /**
@@ -60,7 +63,13 @@ const findEnclosingFunction = (
       let label = 'Function';
       
       // Different node types have different name locations
-      if (current.type === 'function_declaration' || 
+      // Swift init/deinit — handle before generic cases (more specific)
+      if (current.type === 'init_declaration' || current.type === 'deinit_declaration') {
+        const funcName = current.type === 'init_declaration' ? 'init' : 'deinit';
+        return generateId('Constructor', `${filePath}:${funcName}`);
+      }
+
+      if (current.type === 'function_declaration' ||
           current.type === 'function_definition' ||
           current.type === 'async_function_declaration' ||
           current.type === 'generator_function_declaration' ||
@@ -436,6 +445,37 @@ const BUILT_IN_NAMES = new Set([
   'any?', 'all?', 'none?', 'count', 'first', 'last',
   'sort', 'sort_by', 'min', 'max', 'min_by', 'max_by',
   'group_by', 'partition', 'zip', 'compact', 'flatten', 'uniq',
+  // Swift/iOS built-ins and standard library
+  'print', 'debugPrint', 'dump', 'fatalError', 'precondition', 'preconditionFailure',
+  'assert', 'assertionFailure', 'NSLog',
+  'abs', 'min', 'max', 'zip', 'stride', 'sequence', 'repeatElement',
+  'swap', 'withUnsafePointer', 'withUnsafeMutablePointer', 'withUnsafeBytes',
+  'autoreleasepool', 'unsafeBitCast', 'unsafeDowncast', 'numericCast',
+  'type', 'MemoryLayout',
+  // Swift collection/string methods (common noise)
+  'map', 'flatMap', 'compactMap', 'filter', 'reduce', 'forEach', 'contains',
+  'first', 'last', 'prefix', 'suffix', 'dropFirst', 'dropLast',
+  'sorted', 'reversed', 'enumerated', 'joined', 'split',
+  'append', 'insert', 'remove', 'removeAll', 'removeFirst', 'removeLast',
+  'isEmpty', 'count', 'index', 'startIndex', 'endIndex',
+  // UIKit/Foundation common methods (noise in call graph)
+  'addSubview', 'removeFromSuperview', 'layoutSubviews', 'setNeedsLayout',
+  'layoutIfNeeded', 'setNeedsDisplay', 'invalidateIntrinsicContentSize',
+  'addTarget', 'removeTarget', 'addGestureRecognizer',
+  'addConstraint', 'addConstraints', 'removeConstraint', 'removeConstraints',
+  'NSLocalizedString', 'Bundle',
+  'reloadData', 'reloadSections', 'reloadRows', 'performBatchUpdates',
+  'register', 'dequeueReusableCell', 'dequeueReusableSupplementaryView',
+  'beginUpdates', 'endUpdates', 'insertRows', 'deleteRows', 'insertSections', 'deleteSections',
+  'present', 'dismiss', 'pushViewController', 'popViewController', 'popToRootViewController',
+  'performSegue', 'prepare',
+  // GCD / async
+  'DispatchQueue', 'async', 'sync', 'asyncAfter',
+  'Task', 'withCheckedContinuation', 'withCheckedThrowingContinuation',
+  // Combine
+  'sink', 'store', 'assign', 'receive', 'subscribe',
+  // Notification / KVO
+  'addObserver', 'removeObserver', 'post', 'NotificationCenter',
 ]);
 
 const isBuiltInOrNoise = (name: string): boolean => BUILT_IN_NAMES.has(name);
