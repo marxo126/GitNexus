@@ -141,6 +141,7 @@ export const TYPED_PARAMETER_TYPES = new Set([
   'optional_parameter',      // TS: (x?: Foo)
   'formal_parameter',        // Java/Kotlin
   'parameter',               // C#/Rust/Go/Python/Swift
+  'typed_parameter',         // Python: def f(x: Foo) — distinct from 'parameter' in tree-sitter-python
   'parameter_declaration',   // C/C++ void f(Type name)
   'simple_parameter',        // PHP function(Foo $x)
   'property_promotion_parameter', // PHP 8.0+ constructor promotion: __construct(private Foo $x)
@@ -394,15 +395,18 @@ export function extractElementTypeFromString(typeStr: string): string | undefine
 
   // Walk bracket-balanced from the character after the opening bracket to find
   // the matching close bracket, tracking depth for nested brackets.
+  // All bracket types (<, >, [, ]) contribute to depth uniformly, but only the
+  // selected closeChar can match at depth 0 (prevents cross-bracket miscounting).
   let depth = 0;
   const start = openIdx + 1;
   for (let i = start; i < typeStr.length; i++) {
     const ch = typeStr[i];
-    if (ch === openChar || ch === '<' || ch === '[') {
+    if (ch === '<' || ch === '[') {
       depth++;
-    } else if (ch === closeChar || ch === '>' || ch === ']') {
+    } else if (ch === '>' || ch === ']') {
       if (depth === 0) {
-        // Found the matching close bracket — extract and validate first arg.
+        // At depth 0 — only match if it is our selected close bracket.
+        if (ch !== closeChar) return undefined; // mismatched bracket = malformed
         const inner = typeStr.slice(start, i).trim();
         const firstArg = extractFirstArg(inner);
         return firstArg && /^\w+$/.test(firstArg) ? firstArg : undefined;

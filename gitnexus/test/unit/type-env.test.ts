@@ -2599,7 +2599,7 @@ def process():
       expect(flatGet(env, 'user')).toBeUndefined();
     });
 
-    it.skip('infers loop variable from a locally declared const with User[] annotation', () => {
+    it('infers loop variable from a locally declared const with User[] annotation', () => {
       const tree = parse(`
         function process() {
           const users: User[] = getUsers();
@@ -2616,7 +2616,7 @@ def process():
   });
 
   describe('for-loop element type inference (Tier 1c) — Python', () => {
-    it.skip('infers loop variable type from List[User] parameter annotation', () => {
+    it('infers loop variable type from List[User] parameter annotation', () => {
       const tree = parse(`
 def process(users: List[User]):
     for user in users:
@@ -2626,7 +2626,7 @@ def process(users: List[User]):
       expect(flatGet(env, 'user')).toBe('User');
     });
 
-    it.skip('infers loop variable type from Sequence[User] annotation style', () => {
+    it('infers loop variable type from Sequence[User] annotation style', () => {
       const tree = parse(`
 def process(users: Sequence[User]):
     for user in users:
@@ -2678,7 +2678,7 @@ func process(users []User) {
       expect(flatGet(env, 'user')).toBe('User');
     });
 
-    it('infers loop variable from single-var range form (user := range users)', () => {
+    it('does NOT infer element type for single-var slice range (yields index, not element)', () => {
       const tree = parse(`
 package main
 func process(users []User) {
@@ -2688,7 +2688,35 @@ func process(users []User) {
 }
       `, Go);
       const { env } = buildTypeEnv(tree, 'go');
-      expect(flatGet(env, 'user')).toBe('User');
+      // In Go, `for v := range slice` gives the INDEX (int), not the element.
+      expect(flatGet(env, 'user')).toBeUndefined();
+    });
+
+    it('infers loop variable from map range (_, v := range myMap)', () => {
+      const tree = parse(`
+package main
+func process(myMap map[string]User) {
+    for _, v := range myMap {
+        v.Save()
+    }
+}
+      `, Go);
+      const { env } = buildTypeEnv(tree, 'go');
+      expect(flatGet(env, 'v')).toBe('User');
+    });
+
+    it('does NOT infer element type for single-var map range (yields key, not value)', () => {
+      const tree = parse(`
+package main
+func process(myMap map[string]User) {
+    for k := range myMap {
+        _ = k
+    }
+}
+      `, Go);
+      const { env } = buildTypeEnv(tree, 'go');
+      // Single-var map range gives the KEY, not the value
+      expect(flatGet(env, 'k')).toBeUndefined();
     });
 
     it('does not infer type for C-style for loops (no range_clause)', () => {

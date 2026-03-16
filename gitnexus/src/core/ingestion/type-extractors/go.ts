@@ -203,8 +203,34 @@ const extractGoElementTypeFromTypeNode = (typeNode: SyntaxNode): string | undefi
     const elemNode = typeNode.childForFieldName('element');
     if (elemNode) return extractSimpleTypeName(elemNode);
   }
+  // map_type: map[string]User — value field is the element type (for range, second var gets value)
+  if (typeNode.type === 'map_type') {
+    const valueNode = typeNode.childForFieldName('value');
+    if (valueNode) return extractSimpleTypeName(valueNode);
+  }
+  // channel_type: chan User — the type argument is the element type
+  if (typeNode.type === 'channel_type') {
+    const valueNode = typeNode.childForFieldName('value') ?? typeNode.lastNamedChild;
+    if (valueNode) return extractSimpleTypeName(valueNode);
+  }
   // Fallback: text-based extraction ([]User → User, User[] → User)
   return extractElementTypeFromString(typeNode.text);
+};
+
+/** Check if a Go type node represents a channel type. Used to determine
+ *  whether single-var range yields the element (channels) vs index (slices/maps). */
+const isChannelType = (
+  iterableName: string,
+  scopeEnv: ReadonlyMap<string, string>,
+  declarationTypeNodes?: ReadonlyMap<string, SyntaxNode>,
+  scope?: string,
+): boolean => {
+  if (declarationTypeNodes && scope) {
+    const typeNode = declarationTypeNodes.get(`${scope}\0${iterableName}`);
+    if (typeNode) return typeNode.type === 'channel_type';
+  }
+  const t = scopeEnv.get(iterableName);
+  return !!t && t.startsWith('chan ');
 };
 
 /**
@@ -301,20 +327,34 @@ const extractForLoopBinding: ForLoopExtractor = (
 
   if (!elementType) return;
 
-  // The loop variable(s) are in the `left` field. For `_, user` this is an
-  // expression_list with two identifiers; we take the second (the value).
-  // For a single `user := range users` we take the first identifier.
+  // The loop variable(s) are in the `left` field.
+  // Go range semantics:
+  //   Slice/Array/String: single-var → INDEX (int); two-var → (index, element)
+  //   Map:                single-var → KEY; two-var → (key, value)
+  //   Channel:            single-var → ELEMENT (channels have no index)
   const leftNode = rangeClause.childForFieldName('left');
   if (!leftNode) return;
 
   let loopVarNode: SyntaxNode | null = null;
   if (leftNode.type === 'expression_list') {
-    // `_, user` — take second named child (index=0 is `_`, index=1 is the element)
-    loopVarNode = leftNode.namedChildCount >= 2
-      ? leftNode.namedChild(1)
-      : leftNode.namedChild(0);
+    if (leftNode.namedChildCount >= 2) {
+      // Two-var form: `_, user` or `i, user` — second variable gets element/value type
+      loopVarNode = leftNode.namedChild(1);
+    } else {
+      // Single-var in expression_list — yields INDEX for slices/maps, ELEMENT for channels
+      if (isChannelType(iterableName, scopeEnv, declarationTypeNodes, scope)) {
+        loopVarNode = leftNode.namedChild(0);
+      } else {
+        return; // index-only range on slice/map — skip
+      }
+    }
   } else {
-    loopVarNode = leftNode;
+    // Plain identifier (single-var form without expression_list)
+    if (isChannelType(iterableName, scopeEnv, declarationTypeNodes, scope)) {
+      loopVarNode = leftNode;
+    } else {
+      return; // index-only range on slice/map — skip
+    }
   }
   if (!loopVarNode) return;
 

@@ -97,6 +97,21 @@ describe('extractElementTypeFromString', () => {
     });
   });
 
+  describe('cross-bracket nesting (bracket depth fix)', () => {
+    it('Dict[str, List[int]] → str (square-bracket outer, nested inner)', () => {
+      expect(extractElementTypeFromString('Dict[str, List[int]]')).toBe('str');
+    });
+
+    it('Map<String, List<User>> → String (nested angle brackets)', () => {
+      expect(extractElementTypeFromString('Map<String, List<User>>')).toBe('String');
+    });
+
+    it('mismatched close bracket at depth 0 → undefined', () => {
+      // openChar is '<' but first close at depth 0 is ']' — malformed
+      expect(extractElementTypeFromString('Array<int]')).toBeUndefined();
+    });
+  });
+
   describe('edge cases — return undefined', () => {
     it('empty string → undefined', () => {
       expect(extractElementTypeFromString('')).toBeUndefined();
