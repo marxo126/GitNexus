@@ -1,6 +1,6 @@
 import type { SyntaxNode } from '../utils.js';
 import type { LanguageTypeConfig, ParameterExtractor, TypeBindingExtractor, InitializerExtractor, ClassNameLookup, ConstructorBindingScanner, PendingAssignmentExtractor, PatternBindingExtractor, ForLoopExtractor } from './types.js';
-import { extractSimpleTypeName, extractVarName, extractElementTypeFromString, extractGenericTypeArgs, resolveIterableElementType } from './shared.js';
+import { extractSimpleTypeName, extractVarName, extractElementTypeFromString, extractGenericTypeArgs, resolveIterableElementType, methodToTypeArgPosition, type TypeArgPosition } from './shared.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'assignment',
@@ -150,18 +150,35 @@ const PY_FUNCTION_NODE_TYPES = new Set([
  *   generic_type            →  extractGenericTypeArgs → first arg
  * Falls back to text-based extraction.
  */
-const extractPyElementTypeFromAnnotation = (typeNode: SyntaxNode): string | undefined => {
+const extractPyElementTypeFromAnnotation = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+  // Unwrap 'type' wrapper node to get to the actual type (e.g., type > generic_type)
+  const inner = typeNode.type === 'type' ? (typeNode.firstNamedChild ?? typeNode) : typeNode;
+
   // Python subscript: List[User], Sequence[User] — use raw text
-  if (typeNode.type === 'subscript') {
-    return extractElementTypeFromString(typeNode.text);
+  if (inner.type === 'subscript') {
+    return extractElementTypeFromString(inner.text, pos);
   }
-  // generic_type (less common in Python but present in some grammars)
-  if (typeNode.type === 'generic_type') {
-    const args = extractGenericTypeArgs(typeNode);
-    if (args.length >= 1) return args[0];
+  // generic_type: dict[str, User] — tree-sitter-python uses type_parameter child
+  if (inner.type === 'generic_type') {
+    // Try standard extractGenericTypeArgs first (handles type_arguments)
+    const args = extractGenericTypeArgs(inner);
+    if (args.length >= 1) return pos === 'first' ? args[0] : args[args.length - 1];
+    // Fallback: look for type_parameter child (tree-sitter-python specific)
+    for (let i = 0; i < inner.namedChildCount; i++) {
+      const child = inner.namedChild(i);
+      if (child?.type === 'type_parameter') {
+        if (pos === 'first') {
+          const firstArg = child.firstNamedChild;
+          if (firstArg) return extractSimpleTypeName(firstArg);
+        } else {
+          const lastArg = child.lastNamedChild;
+          if (lastArg) return extractSimpleTypeName(lastArg);
+        }
+      }
+    }
   }
   // Fallback: raw text extraction (handles User[], [User], etc.)
-  return extractElementTypeFromString(typeNode.text);
+  return extractElementTypeFromString(inner.text, pos);
 };
 
 /**
@@ -173,7 +190,7 @@ const extractPyElementTypeFromAnnotation = (typeNode: SyntaxNode): string | unde
  * `typed_parameter` may not expose the name as a `name` field — falls back to
  * checking the first identifier-type named child.
  */
-const findPyParamElementType = (iterableName: string, startNode: SyntaxNode): string | undefined => {
+const findPyParamElementType = (iterableName: string, startNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
   let current: SyntaxNode | null = startNode.parent;
   while (current) {
     if (current.type === 'function_definition') {
@@ -191,7 +208,7 @@ const findPyParamElementType = (iterableName: string, startNode: SyntaxNode): st
           const typeAnnotation = param.childForFieldName('type')
             ?? (param.namedChildCount >= 2 ? param.namedChild(param.namedChildCount - 1) : null);
           if (typeAnnotation && typeAnnotation !== nameNode) {
-            return extractPyElementTypeFromAnnotation(typeAnnotation);
+            return extractPyElementTypeFromAnnotation(typeAnnotation, pos);
           }
         }
       }
@@ -220,20 +237,46 @@ const extractForLoopBinding: ForLoopExtractor = (
 ): void => {
   if (node.type !== 'for_statement') return;
 
-  // The iterable is the `right` field of the for_statement.
+  // The iterable is the `right` field — may be identifier or call (data.items()/keys()/values()).
   const rightNode = node.childForFieldName('right');
-  if (!rightNode || rightNode.type !== 'identifier') return;
-  const iterableName = rightNode.text;
+  let iterableName: string | undefined;
+  let methodName: string | undefined;
+  if (rightNode?.type === 'identifier') {
+    iterableName = rightNode.text;
+  } else if (rightNode?.type === 'call') {
+    // data.items() → call > function: attribute > identifier('data') + identifier('items')
+    const fn = rightNode.childForFieldName('function');
+    if (fn?.type === 'attribute') {
+      const obj = fn.firstNamedChild;
+      if (obj?.type === 'identifier') iterableName = obj.text;
+      // Extract method name: items, keys, values
+      const method = fn.lastNamedChild;
+      if (method?.type === 'identifier' && method !== obj) methodName = method.text;
+    }
+  }
+  if (!iterableName) return;
 
+  const typeArgPos = methodToTypeArgPosition(methodName);
   const elementType = resolveIterableElementType(
     iterableName, node, scopeEnv, declarationTypeNodes, scope,
     extractPyElementTypeFromAnnotation, findPyParamElementType,
+    typeArgPos,
   );
   if (!elementType) return;
 
-  // The loop variable is the `left` field — a plain identifier.
+  // The loop variable is the `left` field — identifier or pattern_list.
   const leftNode = node.childForFieldName('left');
   if (!leftNode) return;
+
+  // Handle tuple unpacking: for key, value in data.items()
+  if (leftNode.type === 'pattern_list') {
+    const lastChild = leftNode.lastNamedChild;
+    if (lastChild?.type === 'identifier') {
+      scopeEnv.set(lastChild.text, elementType);
+    }
+    return;
+  }
+
   const loopVarName = extractVarName(leftNode);
   if (loopVarName) scopeEnv.set(loopVarName, elementType);
 };

@@ -1,5 +1,20 @@
 import type { SyntaxNode } from '../utils.js';
 
+/** Which type argument to extract from a multi-arg generic container.
+ *  - 'first': key type (e.g., K from Map<K,V>) — used for .keys(), .keySet()
+ *  - 'last':  value type (e.g., V from Map<K,V>) — used for .values(), .items(), .iter() */
+export type TypeArgPosition = 'first' | 'last';
+
+/** Map method names to which type argument they yield.
+ *  Methods that iterate/return keys → 'first'; everything else → 'last'. */
+const KEY_METHODS = new Set(['keys', 'keySet', 'Keys']);
+
+/** Determine which type arg to use based on the iterator method name.
+ *  .keys() / .keySet() → 'first' (key type); everything else → 'last' (value type). */
+export function methodToTypeArgPosition(methodName: string | undefined): TypeArgPosition {
+  return methodName && KEY_METHODS.has(methodName) ? 'first' : 'last';
+}
+
 /**
  * Shared 3-strategy fallback for resolving the element type of a container variable.
  * Used by all for-loop extractors to resolve the loop variable's type from the iterable.
@@ -11,6 +26,7 @@ import type { SyntaxNode } from '../utils.js';
  *
  * @param extractFromTypeNode Language-specific function to extract element type from AST node
  * @param findParamElementType Optional language-specific AST walk to find parameter type
+ * @param typeArgPos Which generic type arg to extract: 'first' for keys, 'last' for values (default)
  */
 export function resolveIterableElementType(
   iterableName: string,
@@ -18,23 +34,24 @@ export function resolveIterableElementType(
   scopeEnv: ReadonlyMap<string, string>,
   declarationTypeNodes: ReadonlyMap<string, SyntaxNode>,
   scope: string,
-  extractFromTypeNode: (typeNode: SyntaxNode) => string | undefined,
-  findParamElementType?: (name: string, startNode: SyntaxNode) => string | undefined,
+  extractFromTypeNode: (typeNode: SyntaxNode, pos?: TypeArgPosition) => string | undefined,
+  findParamElementType?: (name: string, startNode: SyntaxNode, pos?: TypeArgPosition) => string | undefined,
+  typeArgPos: TypeArgPosition = 'last',
 ): string | undefined {
   // Strategy 1: declarationTypeNodes AST node
   const typeNode = declarationTypeNodes.get(`${scope}\0${iterableName}`);
   if (typeNode) {
-    const t = extractFromTypeNode(typeNode);
+    const t = extractFromTypeNode(typeNode, typeArgPos);
     if (t) return t;
   }
   // Strategy 2: scopeEnv string → extractElementTypeFromString
   const iterableType = scopeEnv.get(iterableName);
   if (iterableType) {
-    const el = extractElementTypeFromString(iterableType);
+    const el = extractElementTypeFromString(iterableType, typeArgPos);
     if (el) return el;
   }
   // Strategy 3: AST walk to function parameters
-  if (findParamElementType) return findParamElementType(iterableName, node);
+  if (findParamElementType) return findParamElementType(iterableName, node, typeArgPos);
   return undefined;
 }
 
@@ -131,8 +148,9 @@ export const extractSimpleTypeName = (typeNode: SyntaxNode): string | undefined 
     if (inner) return extractSimpleTypeName(inner);
   }
 
-  // PHP primitive_type (string, int, float, bool)
-  if (typeNode.type === 'primitive_type') {
+  // Primitive/predefined types: string, int, float, bool, number, unknown, any
+  // PHP: primitive_type; TS/JS: predefined_type
+  if (typeNode.type === 'primitive_type' || typeNode.type === 'predefined_type') {
     return typeNode.text;
   }
 
@@ -383,11 +401,11 @@ function extractFirstArg(args: string): string {
  * - vector<User>   → User  (C++ container)
  * - Vec<User>      → User  (Rust container)
  *
- * For multi-argument generics (Map<K, V>), only the first type argument is
- * returned. Returns undefined when the extracted type is not a simple word
- * (e.g., nested generics as element types).
+ * For multi-argument generics (Map<K, V>), returns the first or last type arg
+ * based on `pos` ('first' for keys, 'last' for values — default 'last').
+ * Returns undefined when the extracted type is not a simple word.
  */
-export function extractElementTypeFromString(typeStr: string): string | undefined {
+export function extractElementTypeFromString(typeStr: string, pos: TypeArgPosition = 'last'): string | undefined {
   if (!typeStr || typeStr.length === 0 || typeStr.length > 2048) return undefined;
 
   // 1. Array suffix: User[] → User
@@ -437,6 +455,7 @@ export function extractElementTypeFromString(typeStr: string): string | undefine
   // selected closeChar can match at depth 0 (prevents cross-bracket miscounting).
   let depth = 0;
   const start = openIdx + 1;
+  let lastCommaIdx = -1; // Track last top-level comma for 'last' position
   for (let i = start; i < typeStr.length; i++) {
     const ch = typeStr[i];
     if (ch === '<' || ch === '[') {
@@ -445,15 +464,23 @@ export function extractElementTypeFromString(typeStr: string): string | undefine
       if (depth === 0) {
         // At depth 0 — only match if it is our selected close bracket.
         if (ch !== closeChar) return undefined; // mismatched bracket = malformed
+        if (pos === 'last' && lastCommaIdx >= 0) {
+          // Return last arg (text after last comma)
+          const lastArg = typeStr.slice(lastCommaIdx + 1, i).trim();
+          return lastArg && /^\w+$/.test(lastArg) ? lastArg : undefined;
+        }
         const inner = typeStr.slice(start, i).trim();
         const firstArg = extractFirstArg(inner);
         return firstArg && /^\w+$/.test(firstArg) ? firstArg : undefined;
       }
       depth--;
     } else if (ch === ',' && depth === 0) {
-      // Top-level comma before the matching close bracket — take the text before it.
-      const arg = typeStr.slice(start, i).trim();
-      return arg && /^\w+$/.test(arg) ? arg : undefined;
+      if (pos === 'first') {
+        // Return first arg (text before first comma)
+        const arg = typeStr.slice(start, i).trim();
+        return arg && /^\w+$/.test(arg) ? arg : undefined;
+      }
+      lastCommaIdx = i;
     }
   }
 

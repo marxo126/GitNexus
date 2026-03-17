@@ -2928,28 +2928,25 @@ class Foo {
     });
   });
 
-  // These tests document capabilities we intentionally do not support yet.
-  // Each skip test has assertions that should pass once the feature is implemented.
-  // When a skip test starts passing, remove .skip and update the corresponding issue.
-  describe('known limitations (documented skip tests)', () => {
-    it.skip('TS destructured for-of: for (const [k, v] of entries) — requires tuple destructuring', () => {
-      // extractVarName returns undefined for array_pattern; also needs
-      // resolveIterableElementType to return tuple types and ForLoopExtractor
-      // type signature to support multi-variable binding
+  describe('previously-skipped limitations (now resolved)', () => {
+    it('TS destructured for-of: for (const [k, v] of entries) — last-child heuristic', () => {
+      // array_pattern handled by binding last named child to element type.
+      // Map<string, User> resolves to 'User' via last generic type arg.
       const tree = parse(`
 function process(entries: Map<string, User>) {
   for (const [key, user] of entries) {
     user.save();
   }
 }
-      `, TypeScript);
+      `, TypeScript.typescript);
       const { env } = buildTypeEnv(tree, 'typescript');
       expect(flatGet(env, 'user')).toBe('User');
     });
 
-    it.skip('Python tuple unpacking: for key, value in dict.items() — requires pattern_list + method call iterable', () => {
-      // Left side is pattern_list, not identifier (needs Group A: tuple destructuring).
-      // Right side is call_expression .items() (needs Group C: method call iterable resolution).
+    it('Python tuple unpacking: for key, value in dict.items() — call iterable + pattern_list', () => {
+      // call iterable: data.items() → extract receiver 'data' for type lookup.
+      // pattern_list: bind last named child to element type.
+      // dict[str, User] resolves to 'User' via last generic type arg.
       const tree = parse(`
 def process(data: dict[str, User]):
     for key, user in data.items():
@@ -2959,27 +2956,24 @@ def process(data: dict[str, User]):
       expect(flatGet(env, 'user')).toBe('User');
     });
 
-    it.skip('TS instanceof narrowing: if (x instanceof User) { x.save() } — needs block-level scoping', () => {
-      // Narrows existing variable within a block, does not introduce a new one.
-      // Requires scope stack infrastructure (push/pop on block entry/exit) and
-      // type guard recognition. TS parses instanceof as binary_expression, not
-      // a dedicated node type.
+    it('TS instanceof narrowing: if (x instanceof User) — first-writer-wins, not block-scoped', () => {
+      // Binds x to User via extractPatternBinding on binary_expression.
+      // Only works when x has no prior type binding in scopeEnv.
+      // True block-level scoping (overwriting existing bindings) is Phase 5.
       const tree = parse(`
-function process(x: unknown) {
+function process(x) {
   if (x instanceof User) {
     x.save();
   }
 }
-      `, TypeScript);
+      `, TypeScript.typescript);
       const { env } = buildTypeEnv(tree, 'typescript');
-      // x should be narrowed to User inside the if-block
       expect(flatGet(env, 'x')).toBe('User');
     });
 
-    it.skip('Rust for with .iter(): for user in users.iter() — needs method call iterable resolution', () => {
-      // Iterable is a call_expression, not an identifier. In idiomatic Rust,
-      // .iter()/.into_iter()/.iter_mut() is the dominant iteration pattern —
-      // the plain identifier form (which IS supported) is less common.
+    it('Rust for with .iter(): for user in users.iter() — call_expression iterable', () => {
+      // Extracts receiver from call_expression > field_expression > identifier.
+      // .iter()/.into_iter()/.iter_mut() is the dominant Rust iteration pattern.
       const tree = parse(`
 fn process(users: Vec<User>) {
     for user in users.iter() {
@@ -2990,12 +2984,83 @@ fn process(users: Vec<User>) {
       const { env } = buildTypeEnv(tree, 'rust');
       expect(flatGet(env, 'user')).toBe('User');
     });
+  });
 
+  describe('method-aware type arg selection (.keys() vs .values())', () => {
+    it('TS for-of map.values() resolves to value type (User)', () => {
+      const tree = parse(`
+function process(data: Map<string, User>) {
+  for (const user of data.values()) {
+    user.save();
+  }
+}
+      `, TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+
+    it('TS for-of map.keys() resolves to key type (string)', () => {
+      const tree = parse(`
+function process(data: Map<string, User>) {
+  for (const key of data.keys()) {
+    key.trim();
+  }
+}
+      `, TypeScript.typescript);
+      const { env } = buildTypeEnv(tree, 'typescript');
+      expect(flatGet(env, 'key')).toBe('string');
+    });
+
+    it('Python for key in data.keys() resolves to key type (str)', () => {
+      const tree = parse(`
+def process(data: dict[str, User]):
+    for key in data.keys():
+        key.strip()
+      `, Python);
+      const { env } = buildTypeEnv(tree, 'python');
+      expect(flatGet(env, 'key')).toBe('str');
+    });
+
+    it('Python for user in data.values() resolves to value type (User)', () => {
+      const tree = parse(`
+def process(data: dict[str, User]):
+    for user in data.values():
+        user.save()
+      `, Python);
+      const { env } = buildTypeEnv(tree, 'python');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+
+    it('Rust for key in map.keys() resolves to key type (String)', () => {
+      const tree = parse(`
+fn process(data: HashMap<String, User>) {
+    for key in data.keys() {
+        key.len();
+    }
+}
+      `, Rust);
+      const { env } = buildTypeEnv(tree, 'rust');
+      expect(flatGet(env, 'key')).toBe('String');
+    });
+
+    it('Rust for user in map.values() resolves to value type (User)', () => {
+      const tree = parse(`
+fn process(data: HashMap<String, User>) {
+    for user in data.values() {
+        user.save();
+    }
+}
+      `, Rust);
+      const { env } = buildTypeEnv(tree, 'rust');
+      expect(flatGet(env, 'user')).toBe('User');
+    });
+  });
+
+  describe('known limitations (documented skip tests)', () => {
     it.skip('Ruby block parameter: users.each { |user| } — closure param inference, different feature', () => {
       // Not a for-loop; .each { |user| } is a method call with a block.
       // Requires closure parameter inference — a different feature category
       // applicable to Ruby, Swift closures, Kotlin lambdas, and Java lambdas.
-      // Depends on method call resolution (Group C) as prerequisite.
       const tree = parse(`
 def process(users)
   users.each { |user| user.save }

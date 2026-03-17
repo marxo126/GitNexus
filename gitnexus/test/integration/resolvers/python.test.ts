@@ -1056,3 +1056,38 @@ describe('Python chained method call resolution', () => {
     expect(repoSave).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// for key, user in data.items() — dict.items() call iterable + tuple unpacking
+// ---------------------------------------------------------------------------
+
+describe('Python dict.items() for-loop resolution', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-dict-items-loop'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User class with save method', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+  });
+
+  it('resolves user.save() via dict.items() loop to User#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user.py'),
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT resolve user.save() to Repo#save (negative)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo.py'),
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});

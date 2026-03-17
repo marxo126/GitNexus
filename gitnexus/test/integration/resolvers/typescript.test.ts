@@ -1471,3 +1471,73 @@ describe('TypeScript readonly array for-loop resolution (Tier 1c)', () => {
     expect(wrong).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// for (const [key, user] of entries) — destructured for-of resolution
+// ---------------------------------------------------------------------------
+
+describe('TS destructured for-of Map resolution', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'typescript-destructured-for-of'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User class with save method', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+  });
+
+  it('resolves user.save() in destructured for-of to User#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processEntries' && c.targetFilePath?.includes('user'),
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT resolve user.save() to Repo#save (negative)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'processEntries' && c.targetFilePath?.includes('repo'),
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// if (x instanceof User) { x.save() } — instanceof narrowing resolution
+// ---------------------------------------------------------------------------
+
+describe('TS instanceof narrowing resolution', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'typescript-instanceof-narrowing'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects User class with save method', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+  });
+
+  it('resolves x.save() after instanceof to User#save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user'),
+    );
+    expect(userSave).toBeDefined();
+  });
+
+  it('does NOT resolve x.save() to Repo#save (negative)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongSave = calls.find(c =>
+      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo'),
+    );
+    expect(wrongSave).toBeUndefined();
+  });
+});

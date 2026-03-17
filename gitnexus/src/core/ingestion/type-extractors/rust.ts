@@ -1,6 +1,6 @@
 import type { SyntaxNode } from '../utils.js';
 import type { LanguageTypeConfig, ParameterExtractor, TypeBindingExtractor, InitializerExtractor, ClassNameLookup, ConstructorBindingScanner, PendingAssignmentExtractor, PatternBindingExtractor, ForLoopExtractor } from './types.js';
-import { extractSimpleTypeName, extractVarName, hasTypeAnnotation, unwrapAwait, extractGenericTypeArgs, resolveIterableElementType } from './shared.js';
+import { extractSimpleTypeName, extractVarName, hasTypeAnnotation, unwrapAwait, extractGenericTypeArgs, resolveIterableElementType, methodToTypeArgPosition, type TypeArgPosition } from './shared.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'let_declaration',
@@ -291,16 +291,16 @@ const FOR_LOOP_NODE_TYPES: ReadonlySet<string> = new Set(['for_expression']);
 /** Extract element type from a Rust type annotation AST node.
  *  Handles: generic_type (Vec<User>), reference_type (&[User]), array_type ([User; N]),
  *  slice_type ([User]). For call-graph purposes, strips references (&User → User). */
-const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode): string | undefined => {
-  // generic_type: Vec<User>, HashSet<User> — extract first type argument
+const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
+  // generic_type: Vec<User>, HashMap<K, V> — extract type arg based on position
   if (typeNode.type === 'generic_type') {
     const args = extractGenericTypeArgs(typeNode);
-    if (args.length >= 1) return args[0];
+    if (args.length >= 1) return pos === 'first' ? args[0] : args[args.length - 1];
   }
   // reference_type: &[User] or &Vec<User> — unwrap the reference and recurse
   if (typeNode.type === 'reference_type') {
     const inner = typeNode.lastNamedChild;
-    if (inner) return extractRustElementTypeFromTypeNode(inner);
+    if (inner) return extractRustElementTypeFromTypeNode(inner, pos);
   }
   // array_type: [User; N] — element is the first child
   if (typeNode.type === 'array_type') {
@@ -317,7 +317,7 @@ const extractRustElementTypeFromTypeNode = (typeNode: SyntaxNode): string | unde
 
 /** Walk up from a for-loop to the enclosing function_item and search parameters
  *  for one named `iterableName`. Returns the element type from its annotation. */
-const findRustParamElementType = (iterableName: string, startNode: SyntaxNode): string | undefined => {
+const findRustParamElementType = (iterableName: string, startNode: SyntaxNode, pos: TypeArgPosition = 'last'): string | undefined => {
   let current: SyntaxNode | null = startNode.parent;
   while (current) {
     if (current.type === 'function_item') {
@@ -338,7 +338,7 @@ const findRustParamElementType = (iterableName: string, startNode: SyntaxNode): 
           }
           if (identNode.text !== iterableName) continue;
           const typeNode = param.childForFieldName('type');
-          if (typeNode) return extractRustElementTypeFromTypeNode(typeNode);
+          if (typeNode) return extractRustElementTypeFromTypeNode(typeNode, pos);
         }
       }
       break;
@@ -362,19 +362,32 @@ const extractForLoopBinding: ForLoopExtractor = (
   const valueNode = node.childForFieldName('value');
   if (!patternNode || !valueNode) return;
 
-  // Extract iterable name — may be &users, &mut users, or plain users
+  // Extract iterable name + method — may be &users, users, or users.iter()/keys()/values()
   let iterableName: string | undefined;
+  let methodName: string | undefined;
   if (valueNode.type === 'reference_expression') {
     const inner = valueNode.lastNamedChild;
     if (inner?.type === 'identifier') iterableName = inner.text;
   } else if (valueNode.type === 'identifier') {
     iterableName = valueNode.text;
+  } else if (valueNode.type === 'call_expression') {
+    // users.iter() → call_expression > function: field_expression > identifier + field_identifier
+    const fieldExpr = valueNode.childForFieldName('function');
+    if (fieldExpr?.type === 'field_expression') {
+      const obj = fieldExpr.firstNamedChild;
+      if (obj?.type === 'identifier') iterableName = obj.text;
+      // Extract method name: iter, keys, values, into_iter, etc.
+      const field = fieldExpr.lastNamedChild;
+      if (field?.type === 'field_identifier') methodName = field.text;
+    }
   }
   if (!iterableName) return;
 
+  const typeArgPos = methodToTypeArgPosition(methodName);
   const elementType = resolveIterableElementType(
     iterableName, node, scopeEnv, declarationTypeNodes, scope,
     extractRustElementTypeFromTypeNode, findRustParamElementType,
+    typeArgPos,
   );
   if (!elementType) return;
 
