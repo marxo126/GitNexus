@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
+    "onnxruntime-node": "^1.24.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "cli-progress": "^3.12.0",
     "commander": "^12.0.0",
@@ -93,6 +94,11 @@
     "tsx": "^4.0.0",
     "typescript": "^5.4.5",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "@huggingface/transformers": {
+      "onnxruntime-node": "$onnxruntime-node"
+    }
   },
   "engines": {
     "node": ">=18.0.0"
