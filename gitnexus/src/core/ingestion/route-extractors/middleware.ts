@@ -88,6 +88,7 @@ export interface NextjsMiddlewareConfig {
  * - wrapper composition (e.g. chain([withAuth, withI18n]))
  */
 export function extractNextjsMiddlewareConfig(content: string): NextjsMiddlewareConfig | undefined {
+  // --- matcher patterns ---
   const matchers: string[] = [];
   const matcherArrayRe = /config\s*=\s*\{[^}]*matcher\s*:\s*\[([^\]]*)\]/s;
   const matcherStringRe = /config\s*=\s*\{[^}]*matcher\s*:\s*(['"`])([^'"`]+)\1/s;
@@ -106,6 +107,7 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     }
   }
 
+  // --- exported name ---
   let exportedName = 'middleware';
   const isNamedMw = /export\s+(?:async\s+)?function\s+middleware\b/.test(content);
   const isConstMw = /export\s+const\s+middleware\s*=/.test(content);
@@ -157,6 +159,7 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
   return { matchers, exportedName, wrappedFunctions };
 }
 
+<<<<<<< HEAD
 /** Pre-compiled matcher for efficient per-route testing. */
 export type CompiledMatcher =
   | { type: 'prefix'; prefix: string }
