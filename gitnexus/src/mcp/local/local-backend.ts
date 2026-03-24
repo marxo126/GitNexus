@@ -1658,9 +1658,13 @@ export class LocalBackend {
       const id = row.routeId ?? row[0];
       const name = row.routeName ?? row[1];
       const filePath = row.handlerFile ?? row[2];
-      const responseKeys: string[] | null = row.responseKeys ?? row[3] ?? null;
-      const errorKeys: string[] | null = row.errorKeys ?? row[4] ?? null;
-      const middleware: string[] | null = row.middleware ?? row[5] ?? null;
+      // Strip wrapping quotes from DB array elements — CSV COPY stores ['key'] which
+      // LadybugDB may return as "'key'" rather than "key"
+      const stripQuotes = (keys: string[] | null): string[] | null =>
+        keys ? keys.map(k => k.replace(/^['"]|['"]$/g, '')) : null;
+      const responseKeys = stripQuotes(row.responseKeys ?? row[3] ?? null);
+      const errorKeys = stripQuotes(row.errorKeys ?? row[4] ?? null);
+      const middleware = stripQuotes(row.middleware ?? row[5] ?? null);
       const consumerName = row.consumerName ?? row[6];
       const consumerFile = row.consumerFile ?? row[7];
       const fetchReason: string | null = row.fetchReason ?? row[8] ?? null;
@@ -1755,23 +1759,30 @@ export class LocalBackend {
     const results = allRoutes
       .filter(r => ((r.responseKeys && r.responseKeys.length > 0) || (r.errorKeys && r.errorKeys.length > 0)) && r.consumers.length > 0)
       .map(r => {
-        const responseKeys = r.responseKeys ?? [];
-        const errorKeys = r.errorKeys ?? [];
+        // Normalize keys — DB may return quoted strings from CSV array literals
+        const strip = (k: string) => k.replace(/^['"]|['"]$/g, '');
+        const responseKeys = (r.responseKeys ?? []).map(strip);
+        const errorKeys = (r.errorKeys ?? []).map(strip);
         // Combined set: consumer accessing either success or error keys is valid
         const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
         // Check each consumer's accessed keys against the route's response shape
+        const errorKeySet = new Set(errorKeys);
+        const responseKeySet = new Set(responseKeys);
         const consumers = r.consumers.map(c => {
           if (!c.accessedKeys || c.accessedKeys.length === 0) {
             return { name: c.name, filePath: c.filePath };
           }
           const mismatched = c.accessedKeys.filter(k => !allKnownKeys.has(k));
+          // Keys that exist only in errorKeys (not in responseKeys) — valid error-path access
+          const errorPathKeys = c.accessedKeys.filter(k => errorKeySet.has(k) && !responseKeySet.has(k));
           const isMultiFetch = (c.fetchCount ?? 1) > 1;
           return {
             name: c.name,
             filePath: c.filePath,
             accessedKeys: c.accessedKeys,
             ...(mismatched.length > 0 ? { mismatched, mismatchConfidence: isMultiFetch ? 'low' as const : 'high' as const } : {}),
+            ...(errorPathKeys.length > 0 ? { errorPathKeys } : {}),
             ...(isMultiFetch ? { attributionNote: `This file fetches ${c.fetchCount} routes — accessed keys may belong to a different route.` } : {}),
           };
         });
@@ -1873,8 +1884,9 @@ export class LocalBackend {
     }
 
     const results = routes.map(r => {
-      const responseKeys = r.responseKeys ?? [];
-      const errorKeys = r.errorKeys ?? [];
+      const strip = (k: string) => k.replace(/^['"]|['"]$/g, '');
+      const responseKeys = (r.responseKeys ?? []).map(strip);
+      const errorKeys = (r.errorKeys ?? []).map(strip);
       const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
       // Build consumer list with mismatch detection

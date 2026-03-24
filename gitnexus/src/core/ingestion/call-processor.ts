@@ -1410,6 +1410,17 @@ const RESPONSE_METHOD_BLOCKLIST = new Set([
   'length', 'toString', 'valueOf',
   'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'concat', 'join',
   'sort', 'reverse', 'includes', 'indexOf', 'keys', 'values', 'entries',
+  // DOM manipulation methods that can appear after response variable names
+  'appendChild', 'removeChild', 'insertBefore', 'replaceChild', 'replaceChildren',
+  'createElement', 'getElementById', 'querySelector', 'querySelectorAll',
+  'setAttribute', 'getAttribute', 'removeAttribute', 'hasAttribute',
+  'addEventListener', 'removeEventListener', 'dispatchEvent',
+  'innerHTML', 'outerHTML', 'textContent', 'innerText',
+  'classList', 'className', 'style', 'dataset',
+  'parentNode', 'parentElement', 'childNodes', 'children',
+  'nextSibling', 'previousSibling', 'firstChild', 'lastChild',
+  'click', 'focus', 'blur', 'submit', 'reset',
+  'href', 'download', 'target', 'rel', 'type',
 ]);
 
 export const extractConsumerAccessedKeys = (content: string): string[] => {
