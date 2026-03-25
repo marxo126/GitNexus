@@ -88,7 +88,6 @@ export interface NextjsMiddlewareConfig {
  * - wrapper composition (e.g. chain([withAuth, withI18n]))
  */
 export function extractNextjsMiddlewareConfig(content: string): NextjsMiddlewareConfig | undefined {
-  // --- matcher patterns ---
   const matchers: string[] = [];
   const matcherArrayRe = /config\s*=\s*\{[^}]*matcher\s*:\s*\[([^\]]*)\]/s;
   const matcherStringRe = /config\s*=\s*\{[^}]*matcher\s*:\s*(['"`])([^'"`]+)\1/s;
@@ -107,7 +106,6 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     }
   }
 
-  // --- exported name ---
   let exportedName = 'middleware';
   // Prefer an explicitly exported `middleware` function (named export)
   const namedMiddlewareExportRe = /export\s+(?:async\s+)?function\s+middleware\b/;
@@ -161,8 +159,6 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     wrappedFunctions.unshift(exportedName);
   }
 
-  // A middleware.ts with an export but no config.matcher applies to all routes.
-  // Only return undefined when there is truly no middleware export detected.
   const hasMiddlewareExport = namedMiddlewareExportRe.test(content) ||
     constMiddlewareExportRe.test(content) ||
     defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
@@ -206,10 +202,6 @@ export function compiledMatcherMatchesRoute(cm: CompiledMatcher, routeURL: strin
   }
 }
 
-/**
- * Test whether a route URL matches a Next.js middleware matcher pattern.
- * Convenience wrapper — for batch use, prefer compileMatcher + compiledMatcherMatchesRoute.
- */
 export function middlewareMatcherMatchesRoute(matcher: string, routeURL: string): boolean {
   const cm = compileMatcher(matcher);
   return cm ? compiledMatcherMatchesRoute(cm, routeURL) : false;
