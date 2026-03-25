@@ -338,6 +338,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM \`Struct\` TO Interface,
   FROM \`Struct\` TO \`Constructor\`,
   FROM \`Struct\` TO \`Property\`,
+  FROM \`Struct\` TO File,
   FROM \`Enum\` TO \`Enum\`,
   FROM \`Enum\` TO Community,
   FROM \`Enum\` TO Class,

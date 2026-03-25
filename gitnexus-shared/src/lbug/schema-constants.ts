@@ -67,6 +67,7 @@ export const REL_TYPES = [
   'ENTRY_POINT_OF',
   'WRAPS',
   'QUERIES',
+  'NAVIGATES_TO', // SwiftUI View → View navigation
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];

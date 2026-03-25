@@ -40,6 +40,7 @@ import type { TieredCandidates } from './model/resolution-context.js';
 import { isLanguageAvailable, loadParser, loadLanguage } from '../tree-sitter/parser-loader.js';
 import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
+import type { ExtractedNavigation } from './swiftui-navigation.js';
 import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
 import { isVerboseIngestionEnabled } from './utils/verbose.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
@@ -3299,4 +3300,44 @@ export const extractFetchCallsFromFiles = async (
   }
 
   return result;
+};
+
+// ============================================================================
+// SwiftUI Navigation Processing
+// ============================================================================
+
+export const processSwiftUINavigation = (graph: KnowledgeGraph, navigations: ExtractedNavigation[]): number => {
+  const structsByName = new Map<string, { id: string; filePath: string }[]>();
+  graph.forEachNode((node) => {
+    if (node.label === 'Struct' && node.properties.name) {
+      const name = node.properties.name as string;
+      let entries = structsByName.get(name);
+      if (!entries) { entries = []; structsByName.set(name, entries); }
+      entries.push({ id: node.id, filePath: node.properties.filePath as string });
+    }
+  });
+  const seenEdges = new Set<string>();
+  let edgesCreated = 0;
+  for (const nav of navigations) {
+    let sourceId: string;
+    if (nav.sourceView) {
+      const structId = findStructInIndex(structsByName, nav.sourceView, nav.filePath);
+      sourceId = structId || generateId('File', nav.filePath);
+    } else { sourceId = generateId('File', nav.filePath); }
+    const targetId = findStructInIndex(structsByName, nav.targetView);
+    if (!targetId) continue;
+    const relId = generateId('NAVIGATES_TO', `${sourceId}->${targetId}:${nav.navigationType}`);
+    if (seenEdges.has(relId)) continue;
+    seenEdges.add(relId);
+    graph.addRelationship({ id: relId, sourceId, targetId, type: 'NAVIGATES_TO', confidence: 0.9, reason: nav.navigationType });
+    edgesCreated++;
+  }
+  return edgesCreated;
+};
+
+const findStructInIndex = (index: Map<string, { id: string; filePath: string }[]>, name: string, preferFilePath?: string): string | undefined => {
+  const entries = index.get(name);
+  if (!entries || entries.length === 0) return undefined;
+  if (preferFilePath) { const sameFile = entries.find(e => e.filePath === preferFilePath); if (sameFile) return sameFile.id; }
+  return entries[0].id;
 };

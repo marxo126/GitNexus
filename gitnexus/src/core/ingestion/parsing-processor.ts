@@ -47,6 +47,7 @@ import type {
   ExtractedORMQuery,
 } from './workers/parse-worker.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
+import type { ExtractedNavigation } from './swiftui-navigation.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -60,6 +61,7 @@ export interface WorkerExtractedData {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  navigations: ExtractedNavigation[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
 }
@@ -94,6 +96,7 @@ const processParsingWithWorkers = async (
       decoratorRoutes: [],
       toolDefs: [],
       ormQueries: [],
+      navigations: [],
       constructorBindings: [],
       fileScopeBindings: [],
     };
@@ -118,6 +121,7 @@ const processParsingWithWorkers = async (
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allNavigations: ExtractedNavigation[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
   for (const result of chunkResults) {
@@ -185,6 +189,7 @@ const processParsingWithWorkers = async (
     decoratorRoutes: allDecoratorRoutes,
     toolDefs: allToolDefs,
     ormQueries: allORMQueries,
+    navigations: allNavigations,
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
   };

@@ -37,6 +37,12 @@ import {
   type CommunitiesOutput,
   type ProcessesOutput,
 } from './pipeline-phases/index.js';
+import {
+  processImports,
+  processImportsFromExtracted,
+  buildImportResolutionContext
+} from './import-processor.js';
+import { extractSwiftUINavigations } from './swiftui-navigation.js';
 
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
