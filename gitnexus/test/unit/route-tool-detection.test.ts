@@ -600,6 +600,7 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.matchers).toEqual(['/dashboard/:path*']);
   });
 
+
   it('handles export default function middleware(...)', () => {
     const content = `export default function middleware(req) { return NextResponse.next(); }`;
     const result = extractNextjsMiddlewareConfig(content);

@@ -109,18 +109,26 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
 
   // --- exported name ---
   let exportedName = 'middleware';
-  const isNamedMw = /export\s+(?:async\s+)?function\s+middleware\b/.test(content);
+  // Prefer an explicitly exported `middleware` function (named export)
+  const namedMiddlewareExportRe = /export\s+(?:async\s+)?function\s+middleware\b/;
+  // Handle `export default (async )?function <name>?`
+  const defaultFunctionExportRe = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/;
+  // Handle `export default <identifier>` while avoiding mis-parsing `function`
+  const defaultIdentifierExportRe = /export\s+default\s+(?!function\b)(\w+)/;
+  // Also detect `export const middleware = ...`
   const isConstMw = /export\s+const\s+middleware\s*=/.test(content);
-  const defaultFunctionMatch = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/.exec(
-    content,
-  );
-  const defaultIdentifierMatch = /export\s+default\s+(?!function\b)(\w+)/.exec(content);
 
-  if (!isNamedMw && !isConstMw) {
+  if (namedMiddlewareExportRe.test(content) || isConstMw) {
+    exportedName = 'middleware';
+  } else {
+    const defaultFunctionMatch = defaultFunctionExportRe.exec(content);
     if (defaultFunctionMatch) {
       exportedName = defaultFunctionMatch[1] ?? 'middleware';
-    } else if (defaultIdentifierMatch) {
-      exportedName = defaultIdentifierMatch[1];
+    } else {
+      const defaultIdentifierMatch = defaultIdentifierExportRe.exec(content);
+      if (defaultIdentifierMatch) {
+        exportedName = defaultIdentifierMatch[1];
+      }
     }
   }
 
@@ -153,13 +161,15 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     wrappedFunctions.unshift(exportedName);
   }
 
-  const hasExport = isNamedMw || isConstMw || !!defaultFunctionMatch || !!defaultIdentifierMatch;
-  if (!hasExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
+  // A middleware.ts with an export but no config.matcher applies to all routes.
+  // Only return undefined when there is truly no middleware export detected.
+  const hasMiddlewareExport = namedMiddlewareExportRe.test(content) || isConstMw ||
+    defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
+  if (!hasMiddlewareExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
 
   return { matchers, exportedName, wrappedFunctions };
 }
 
-<<<<<<< HEAD
 /** Pre-compiled matcher for efficient per-route testing. */
 export type CompiledMatcher =
   | { type: 'prefix'; prefix: string }
