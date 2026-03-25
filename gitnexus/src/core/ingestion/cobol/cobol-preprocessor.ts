@@ -158,6 +158,9 @@ export function preprocessCobolSource(content: string): string {
 // Preserved exactly: EXCLUDED_PARA_NAMES
 // ---------------------------------------------------------------------------
 
+// COBOL calling-convention keywords to filter from USING parameter lists
+const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF']);
+
 const EXCLUDED_PARA_NAMES = new Set([
   'DECLARATIVES', 'END', 'PROCEDURE', 'IDENTIFICATION',
   'ENVIRONMENT', 'DATA', 'WORKING-STORAGE', 'LINKAGE',
@@ -714,7 +717,7 @@ export function extractCobolSymbolsWithRegex(
 
     // Buffer as new pending logical line
     pendingLine = cleaned;
-    pendingLineNumber = i;
+    pendingLineNumber = i + 1; // 1-indexed (consistent with free-format)
   }
 
   // Flush final pending line
@@ -817,7 +820,7 @@ export function extractCobolSymbolsWithRegex(
           currentParagraph = null;
           const procUsingMatch = line.match(RE_PROC_USING);
           if (procUsingMatch) {
-            const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF']);
+            // USING_KEYWORDS defined at module scope for reuse in ENTRY USING
             result.procedureUsing = procUsingMatch[1].trim().split(/\s+/)
               .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
           }
@@ -1072,7 +1075,7 @@ export function extractCobolSymbolsWithRegex(
     const paraMatch = line.match(RE_PROC_PARAGRAPH);
     if (paraMatch) {
       const name = paraMatch[1];
-      if (!EXCLUDED_PARA_NAMES.has(name.toUpperCase()) && !name.toUpperCase().startsWith('END-') && !name.toUpperCase().includes('DIVISION') && !name.toUpperCase().includes('SECTION')) {
+      if (!EXCLUDED_PARA_NAMES.has(name.toUpperCase()) && !name.toUpperCase().startsWith('END-') && name.toUpperCase() !== 'DIVISION' && name.toUpperCase() !== 'SECTION') {
         result.paragraphs.push({ name, line: lineNum });
         currentParagraph = name;
       }
@@ -1107,7 +1110,9 @@ export function extractCobolSymbolsWithRegex(
       if (entryName) {
         result.entryPoints.push({
           name: entryName,
-          parameters: usingClause ? usingClause.trim().split(/\s+/).filter(s => s.length > 0) : [],
+          parameters: usingClause
+            ? usingClause.trim().split(/\s+/).filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()))
+            : [],
           line: lineNum,
         });
       }
@@ -1155,11 +1160,11 @@ export function extractCobolSymbolsWithRegex(
         const afterUsing = line.substring(usingIdx + 6);
         const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
         const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
-        usingFiles.push(...usingText.trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+        usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
       }
       if (givingIdx >= 0) {
         const givingText = line.substring(givingIdx + 7);
-        givingFiles.push(...givingText.trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+        givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
       }
       result.sorts.push({
         sortFile: sortMatch[1],

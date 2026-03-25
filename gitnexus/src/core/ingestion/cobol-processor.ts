@@ -141,7 +141,8 @@ export const processCobol = (
     return entry ? entry.path : null;
   };
   const readCopy = (copyPath: string): string | null => {
-    return copybookByPath.get(copyPath) ?? null;
+    const content = copybookByPath.get(copyPath);
+    return content ? preprocessCobolSource(content) : null;
   };
 
   // Track module names for cross-program CALL resolution

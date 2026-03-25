@@ -647,6 +647,45 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.entryPoints[0].parameters).toEqual(['WS-PARAM1']);
     });
 
+    it('ENTRY USING filters calling-convention keywords (BY VALUE REFERENCE)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           ENTRY 'ALTENTRY' USING BY VALUE WS-AMT BY REFERENCE LS-REC.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.entryPoints).toHaveLength(1);
+      // BY, VALUE, REFERENCE should be filtered out — only actual parameter names remain
+      expect(r.entryPoints[0].parameters).toEqual(['WS-AMT', 'LS-REC']);
+    });
+
+    it('paragraphs with SECTION in name are NOT excluded (e.g., CROSS-SECTION-PROC)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       CROSS-SECTION-ANALYSIS.',
+        '           DISPLAY "HELLO".',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.paragraphs.map(p => p.name)).toContain('CROSS-SECTION-ANALYSIS');
+    });
+
+    it('numeric sequence numbers are stripped so paragraphs are detected', () => {
+      const src = preprocessCobolSource(cobol(
+        '000100 IDENTIFICATION DIVISION.',
+        '000200 PROGRAM-ID. SEQTEST.',
+        '000300 PROCEDURE DIVISION.',
+        '000400 MAIN-PARA.',
+        '000500     DISPLAY "HI".',
+      ));
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.programName).toBe('SEQTEST');
+      expect(r.paragraphs.map(p => p.name)).toEqual(['MAIN-PARA']);
+    });
+
     it('extracts MOVE statements (skipping figurative constants)', () => {
       const src = cobol(
         '      IDENTIFICATION DIVISION.',
