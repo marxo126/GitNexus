@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'Webhook';
 
 export type NodeProperties = {
   name: string;
@@ -89,6 +90,9 @@ export type NodeProperties = {
   responseKeys?: string[];
   errorKeys?: string[];
   middleware?: string[];
+  // Webhook/event handler
+  kind?: string;
+  eventTypes?: string[];
   // Extensible
   [key: string]: unknown;
 };
@@ -115,7 +119,10 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'TRIGGERS'
+  | 'ENQUEUES'
+  | 'PROCESSES';
 
 export interface GraphNode {
   id: string;
