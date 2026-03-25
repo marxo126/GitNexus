@@ -28,6 +28,13 @@ describe('extractResponseShapes', () => {
     expect(result.responseKeys).toContain('count');
   });
 
+  it('extracts backtick-quoted property keys from .json() call', () => {
+    const content = 'return NextResponse.json({ `users`: data, `total`: count });';
+    const result = extractResponseShapes(content);
+    expect(result.responseKeys).toContain('users');
+    expect(result.responseKeys).toContain('total');
+  });
+
   it('classifies error keys by status code', () => {
     const content = `
       return NextResponse.json({ error: 'Not found' }, { status: 404 });

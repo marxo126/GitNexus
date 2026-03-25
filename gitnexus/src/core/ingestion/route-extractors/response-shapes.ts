@@ -77,7 +77,8 @@ export function extractResponseShapes(content: string): { responseKeys?: string[
         continue;
       }
       if (ch === '"' || ch === "'" || ch === '`') {
-        // At depth 1, a quoted string before ':' is a property key — extract it
+        // Quoted string at depth 1 before ':' is a property key (e.g., { 'courses': data })
+        // The original parser only handled unquoted identifiers.
         if (depth === 1 && keyStart === -1) {
           const quote = ch;
           const strStart = j + 1;
@@ -87,8 +88,10 @@ export function extractResponseShapes(content: string): { responseKeys?: string[
             if (content[s] === quote) { strEnd = s; break; }
           }
           if (strEnd !== -1) {
-            const rest = content.slice(strEnd + 1).trimStart();
-            if (rest[0] === ':') {
+            // Scan forward for ':' without allocating a substring
+            let p = strEnd + 1;
+            while (p < content.length && (content[p] === ' ' || content[p] === '\t' || content[p] === '\n' || content[p] === '\r')) p++;
+            if (content[p] === ':') {
               callKeys.push(content.slice(strStart, strEnd));
             }
             j = strEnd;

@@ -1767,15 +1767,14 @@ export class LocalBackend {
         const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
         // Check each consumer's accessed keys against the route's response shape
-        const errorKeySet = new Set(errorKeys);
         const responseKeySet = new Set(responseKeys);
         const consumers = r.consumers.map(c => {
           if (!c.accessedKeys || c.accessedKeys.length === 0) {
             return { name: c.name, filePath: c.filePath };
           }
           const mismatched = c.accessedKeys.filter(k => !allKnownKeys.has(k));
-          // Keys that exist only in errorKeys (not in responseKeys) — valid error-path access
-          const errorPathKeys = c.accessedKeys.filter(k => errorKeySet.has(k) && !responseKeySet.has(k));
+          // Keys in allKnownKeys but not in responseKeys — error-path access (e.g., .error from errorKeys)
+          const errorPathKeys = c.accessedKeys.filter(k => allKnownKeys.has(k) && !responseKeySet.has(k));
           const isMultiFetch = (c.fetchCount ?? 1) > 1;
           return {
             name: c.name,
