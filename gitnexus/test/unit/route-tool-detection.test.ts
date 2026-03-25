@@ -549,6 +549,20 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.exportedName).toBe('middleware');
   });
 
+
+  it('detects arrow function const export', () => {
+    const content = `
+      export const middleware = (req) => {
+        return NextResponse.next();
+      };
+      export const config = { matcher: ['/dashboard/:path*'] };
+    `;
+    const result = extractNextjsMiddlewareConfig(content);
+    expect(result).toBeDefined();
+    expect(result!.exportedName).toBe('middleware');
+    expect(result!.matchers).toEqual(['/dashboard/:path*']);
+  });
+
   it('handles export default function middleware(...)', () => {
     const content = `export default function middleware(req) { return NextResponse.next(); }`;
     const result = extractNextjsMiddlewareConfig(content);

@@ -86,7 +86,10 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
   // Handle `export default <identifier>` while avoiding mis-parsing `function`
   const defaultIdentifierExportRe = /export\s+default\s+(?!function\b)(\w+)/;
 
-  if (namedMiddlewareExportRe.test(content)) {
+  // Arrow function const export: export const middleware = (req) => ...
+  const constMiddlewareExportRe = /export\s+const\s+middleware\s*=/;
+
+  if (namedMiddlewareExportRe.test(content) || constMiddlewareExportRe.test(content)) {
     exportedName = 'middleware';
   } else {
     const defaultFunctionMatch = defaultFunctionExportRe.exec(content);
@@ -138,33 +141,47 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
   // A middleware.ts with an export but no config.matcher applies to all routes.
   // Only return undefined when there is truly no middleware export detected.
   const hasMiddlewareExport = namedMiddlewareExportRe.test(content) ||
+    constMiddlewareExportRe.test(content) ||
     defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
   if (!hasMiddlewareExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
 
   return { matchers, exportedName, wrappedFunctions };
 }
 
+/** Pre-compiled matcher for efficient per-route testing. */
+export type CompiledMatcher =
+  | { type: 'prefix'; prefix: string }
+  | { type: 'regex'; re: RegExp }
+  | { type: 'exact'; value: string };
+
+/**
+ * Compile a Next.js middleware matcher pattern into a reusable matcher.
+ * Call once per pattern, then use compiledMatcherMatchesRoute per route.
+ */
+export function compileMatcher(matcher: string): CompiledMatcher | null {
+  const paramWild = matcher.replace(/\/:path\*$/, '');
+  if (paramWild !== matcher) return { type: 'prefix', prefix: paramWild };
+  if (matcher.includes('(')) {
+    try { return { type: 'regex', re: new RegExp('^' + matcher + '$') }; }
+    catch { return null; }
+  }
+  return { type: 'exact', value: matcher };
+}
+
+/** Test a route URL against a pre-compiled matcher. */
+export function compiledMatcherMatchesRoute(cm: CompiledMatcher, routeURL: string): boolean {
+  switch (cm.type) {
+    case 'prefix': return routeURL === cm.prefix || routeURL.startsWith(cm.prefix + '/');
+    case 'regex':  return cm.re.test(routeURL);
+    case 'exact':  return routeURL === cm.value;
+  }
+}
+
 /**
  * Test whether a route URL matches a Next.js middleware matcher pattern.
- * Supports: '/api/:path*' (prefix), '/((?!api|_next).*)' (regex), '/exact' (exact).
+ * Convenience wrapper — for batch use, prefer compileMatcher + compiledMatcherMatchesRoute.
  */
 export function middlewareMatcherMatchesRoute(matcher: string, routeURL: string): boolean {
-  // :path* suffix → prefix match
-  const paramWild = matcher.replace(/\/:path\*$/, '');
-  if (paramWild !== matcher) {
-    return routeURL === paramWild || routeURL.startsWith(paramWild + '/');
-  }
-
-  // Regex-style matcher (contains parentheses)
-  if (matcher.includes('(')) {
-    try {
-      const re = new RegExp('^' + matcher + '$');
-      return re.test(routeURL);
-    } catch {
-      return false;
-    }
-  }
-
-  // Exact match
-  return routeURL === matcher;
+  const cm = compileMatcher(matcher);
+  return cm ? compiledMatcherMatchesRoute(cm, routeURL) : false;
 }

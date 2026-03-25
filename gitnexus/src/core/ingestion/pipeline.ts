@@ -12,7 +12,7 @@ import { processCalls, processCallsFromExtracted, processAssignmentsFromExtracte
 import { nextjsFileToRouteURL, normalizeFetchURL } from './route-extractors/nextjs.js';
 import { phpFileToRouteURL } from './route-extractors/php.js';
 import { extractResponseShapes } from './route-extractors/response-shapes.js';
-import { extractMiddlewareChain, extractNextjsMiddlewareConfig, middlewareMatcherMatchesRoute } from './route-extractors/middleware.js';
+import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, compiledMatcherMatchesRoute } from './route-extractors/middleware.js';
 import { generateId } from '../../lib/utils.js';
 import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef } from './workers/parse-worker.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
@@ -1152,8 +1152,8 @@ export const runPipelineFromRepo = async (
     // ── Phase 3.5b: Link Next.js project-level middleware.ts to routes ──
     if (routeRegistry.size > 0) {
       const middlewareCandidates = allPaths.filter(p =>
-        p === 'middleware.ts' || p === 'middleware.js' ||
-        p === 'src/middleware.ts' || p === 'src/middleware.js'
+        p === 'middleware.ts' || p === 'middleware.js' || p === 'middleware.tsx' || p === 'middleware.jsx' ||
+        p === 'src/middleware.ts' || p === 'src/middleware.js' || p === 'src/middleware.tsx' || p === 'src/middleware.jsx'
       );
       if (middlewareCandidates.length > 0) {
         const mwContents = await readFileContents(repoPath, middlewareCandidates);
@@ -1164,10 +1164,13 @@ export const runPipelineFromRepo = async (
             ? config.wrappedFunctions
             : [config.exportedName];
 
+          // Pre-compile matchers once per middleware file
+          const compiled = config.matchers.map(compileMatcher).filter((m): m is NonNullable<typeof m> => m !== null);
+
           let linkedCount = 0;
           for (const [routeURL] of routeRegistry) {
-            const matches = config.matchers.length === 0 ||
-              config.matchers.some(m => middlewareMatcherMatchesRoute(m, routeURL));
+            const matches = compiled.length === 0 ||
+              compiled.some(cm => compiledMatcherMatchesRoute(cm, routeURL));
             if (!matches) continue;
 
             const routeNodeId = generateId('Route', routeURL);
