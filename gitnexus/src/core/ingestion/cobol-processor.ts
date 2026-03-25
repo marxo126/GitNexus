@@ -591,8 +591,25 @@ function mapToGraph(
     }
   }
 
-  // ── Build data item Map early (needed by CICS INTO/FROM and MOVE) ──
+  // ── Build data item Map early (needed by CICS INTO/FROM, MOVE, and USING) ──
   const dataItemMap = buildDataItemMap(extracted.dataItems, filePath);
+
+  // ── PROCEDURE DIVISION USING -> ACCESSES edges (parameter contract) ──
+  if (moduleId && extracted.procedureUsing.length > 0) {
+    for (const param of extracted.procedureUsing) {
+      const paramPropId = dataItemMap.get(param.toUpperCase());
+      if (paramPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${moduleId}->using->${param}`),
+          type: 'ACCESSES',
+          sourceId: moduleId,
+          targetId: paramPropId,
+          confidence: 1.0,
+          reason: 'cobol-procedure-using',
+        });
+      }
+    }
+  }
 
   // ── EXEC CICS blocks -> CodeElement nodes + CALLS edges ────────
   for (const cics of extracted.execCicsBlocks) {

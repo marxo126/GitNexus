@@ -406,6 +406,15 @@ describe('COBOL full system extraction', () => {
       expect(getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'sort-giving').length).toBe(1);
     });
 
+    it('produces exactly 2 ACCESSES edges with reason cobol-procedure-using', () => {
+      const edges = getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'cobol-procedure-using');
+      expect(edges.length).toBe(2);
+      expect(edgeSet(edges)).toEqual([
+        'AUDITLOG \u2192 LS-AMOUNT',
+        'AUDITLOG \u2192 LS-CUST-ID',
+      ]);
+    });
+
     it('produces exactly 1 ACCESSES edge with reason sql-select', () => {
       expect(getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'sql-select').length).toBe(1);
     });
@@ -447,10 +456,11 @@ describe('COBOL full system extraction', () => {
       expect(getRelationships(result, 'IMPORTS').length).toBe(2);
     });
 
-    it('produces exactly 19 total ACCESSES edges', () => {
+    it('produces exactly 21 total ACCESSES edges', () => {
       // 4 move-read + 5 move-write + 1 file-read + 1 map + 1 queue-write
-      // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sort-giving + 1 sql-select
-      expect(getRelationships(result, 'ACCESSES').length).toBe(19);
+      // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sort-giving
+      // + 2 procedure-using + 1 sql-select
+      expect(getRelationships(result, 'ACCESSES').length).toBe(21);
     });
   });
 });
