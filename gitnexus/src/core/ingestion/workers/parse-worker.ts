@@ -16,6 +16,11 @@ import { createRequire } from 'node:module';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
 import {
+  extractSwiftUINavigations,
+  type ExtractedNavigation,
+  type SwiftUINavigationType,
+} from '../swiftui-navigation.js';
+import {
   getTreeSitterBufferSize,
   getTreeSitterContentByteLength,
   TREE_SITTER_MAX_BUFFER,
@@ -276,6 +281,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  navigations: ExtractedNavigation[];
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
@@ -743,6 +749,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    navigations: [],
     constructorBindings: [],
     fileScopeBindings: [],
     parsedFiles: [],
@@ -2313,6 +2320,8 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, parseContent, result.ormQueries);
+    // ── SwiftUI Navigation Detection ──
+    extractSwiftUINavigations(file.path, file.content, result.navigations);
 
     // Vue: emit CALLS edges for components used in <template>
     if (language === SupportedLanguages.Vue) {
@@ -2347,6 +2356,7 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  navigations: [],
   constructorBindings: [],
   fileScopeBindings: [],
   parsedFiles: [],
@@ -2375,6 +2385,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.decoratorRoutes, src.decoratorRoutes);
   appendAll(target.toolDefs, src.toolDefs);
   appendAll(target.ormQueries, src.ormQueries);
+  appendAll(target.navigations, src.navigations);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
   appendAll(target.parsedFiles, src.parsedFiles);
@@ -2427,6 +2438,7 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        navigations: [],
         constructorBindings: [],
         fileScopeBindings: [],
         parsedFiles: [],
