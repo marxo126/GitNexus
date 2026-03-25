@@ -21,7 +21,7 @@ import path from 'path';
 import { LocalBackend } from '../../src/mcp/local/local-backend.js';
 import { listRegisteredRepos } from '../../src/storage/repo-manager.js';
 import { withTestLbugDB } from '../helpers/test-indexed-db.js';
-import type { ExtractedWebhook } from '../../src/core/ingestion/workers/parse-worker.js';
+import { extractWebhooks, type ExtractedWebhook } from '../../src/core/ingestion/workers/parse-worker.js';
 
 vi.mock('../../src/storage/repo-manager.js', () => ({
   listRegisteredRepos: vi.fn().mockResolvedValue([]),
@@ -31,11 +31,6 @@ vi.mock('../../src/storage/repo-manager.js', () => ({
 const WEBHOOK_REPO = path.resolve(__dirname, '..', 'fixtures', 'webhook-repo');
 
 // ─── Part A: extractWebhooks detection logic against fixture files ────
-//
-// We import the worker module and call extractWebhooks through a dynamic import
-// since it's not exported directly. Instead, we replicate the detection logic
-// inline — this is identical to what parse-worker.ts does. The fixture files
-// are the canonical proof that the regex patterns match real-world code.
 
 describe('webhook detection — extraction from fixture files', () => {
   const stripeContent = fs.readFileSync(
@@ -47,38 +42,6 @@ describe('webhook detection — extraction from fixture files', () => {
   const realtimeContent = fs.readFileSync(
     path.join(WEBHOOK_REPO, 'lib/realtime.ts'), 'utf-8'
   );
-
-  // Replicate extractWebhooks logic from parse-worker.ts to prove fixture detection
-  function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
-    const lp = filePath.toLowerCase();
-    if (lp.includes('/test') || lp.includes('.test.') || lp.includes('.spec.') || lp.includes('__test')) return;
-
-    if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
-      const eventTypes: string[] = [];
-      const caseRe = /case\s+['"]([.\w-]+)['"]/g;
-      let m;
-      while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
-      const idx = content.indexOf('constructEvent');
-      out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
-        lineNumber: idx > -1 ? content.substring(0, idx).split('\n').length - 1 : 0 });
-      return;
-    }
-    const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
-    if (edgeFnMatch && content.includes('Deno.serve')) {
-      const idx = content.indexOf('Deno.serve');
-      out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
-        lineNumber: content.substring(0, idx).split('\n').length - 1 });
-      return;
-    }
-    if (content.includes('postgres_changes')) {
-      const channelRe = /\.channel\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
-      let m;
-      while ((m = channelRe.exec(content)) !== null) {
-        out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
-          lineNumber: content.substring(0, m.index).split('\n').length - 1 });
-      }
-    }
-  }
 
   it('detects Stripe webhook with correct kind and eventTypes', () => {
     const out: ExtractedWebhook[] = [];
