@@ -402,6 +402,10 @@ describe('COBOL full system extraction', () => {
       expect(getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'sort-using').length).toBe(1);
     });
 
+    it('produces exactly 1 ACCESSES edge with reason sort-giving (multi-line SORT)', () => {
+      expect(getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'sort-giving').length).toBe(1);
+    });
+
     it('produces exactly 1 ACCESSES edge with reason sql-select', () => {
       expect(getRelationships(result, 'ACCESSES').filter(e => e.rel.reason === 'sql-select').length).toBe(1);
     });
@@ -443,10 +447,10 @@ describe('COBOL full system extraction', () => {
       expect(getRelationships(result, 'IMPORTS').length).toBe(2);
     });
 
-    it('produces exactly 18 total ACCESSES edges', () => {
+    it('produces exactly 19 total ACCESSES edges', () => {
       // 4 move-read + 5 move-write + 1 file-read + 1 map + 1 queue-write
-      // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sql-select
-      expect(getRelationships(result, 'ACCESSES').length).toBe(18);
+      // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sort-giving + 1 sql-select
+      expect(getRelationships(result, 'ACCESSES').length).toBe(19);
     });
   });
 });

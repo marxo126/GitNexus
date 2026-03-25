@@ -361,11 +361,11 @@ function parseConditionValues(valuesStr: string): string[] {
   const values: string[] = [];
 
   // Match quoted strings: "O" "Y" "I"
-  const quotedRe = /"([^"]*)"/g;
+  const quotedRe = /(?:"([^"]*)"|'([^']*)')/g;
   let qm: RegExpExecArray | null;
   let hasQuoted = false;
   while ((qm = quotedRe.exec(text)) !== null) {
-    values.push(qm[1]);
+    values.push(qm[1] ?? qm[2]);
     hasQuoted = true;
   }
   if (hasQuoted) return values;
@@ -635,6 +635,13 @@ export function extractCobolSymbolsWithRegex(
   let selectAccum: string | null = null;
   let selectStartLine = 0;
 
+  // PROCEDURE DIVISION USING on next line
+  let pendingProcUsing = false;
+
+  // SORT/MERGE accumulator (multi-line SORT ... USING ... GIVING ...)
+  let sortAccum: string | null = null;
+  let sortStartLine = 0;
+
   // EXEC block accumulator (multi-line EXEC SQL / EXEC CICS)
   let execAccum: { type: 'sql' | 'cics'; lines: string; startLine: number } | null = null;
 
@@ -820,9 +827,11 @@ export function extractCobolSymbolsWithRegex(
           currentParagraph = null;
           const procUsingMatch = line.match(RE_PROC_USING);
           if (procUsingMatch) {
-            // USING_KEYWORDS defined at module scope for reuse in ENTRY USING
             result.procedureUsing = procUsingMatch[1].trim().split(/\s+/)
               .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
+          } else {
+            // USING may be on the next line — flag for extractProcedure to pick up
+            pendingProcUsing = true;
           }
           break;
         }
@@ -1058,6 +1067,17 @@ export function extractCobolSymbolsWithRegex(
   // PROCEDURE DIVISION extraction
   // =========================================================================
   function extractProcedure(line: string, lineNum: number): void {
+    // Handle PROCEDURE DIVISION USING on a continuation line
+    if (pendingProcUsing) {
+      const usingMatch = line.match(/\bUSING\s+([\s\S]*?)(?:\.|$)/i);
+      if (usingMatch) {
+        result.procedureUsing = usingMatch[1].trim().split(/\s+/)
+          .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
+      }
+      pendingProcUsing = false;
+      if (usingMatch) return; // consumed the USING line
+    }
+
     // Section header
     const secMatch = line.match(RE_PROC_SECTION);
     if (secMatch) {
@@ -1090,7 +1110,8 @@ export function extractCobolSymbolsWithRegex(
       if (!PERFORM_KEYWORD_SKIP.has(target.toUpperCase())) {
         // Also check for "PERFORM identifier TIMES" — the identifier is a
         // data item count, not a paragraph name (fundamental regex ambiguity).
-        const afterTarget = line.substring(line.indexOf(target) + target.length).trim();
+        const matchEnd = perfMatch.index! + perfMatch[0].length;
+        const afterTarget = line.substring(matchEnd).trim();
         if (!/^TIMES\b/i.test(afterTarget)) {
           result.performs.push({
             caller: currentParagraph,
@@ -1147,31 +1168,41 @@ export function extractCobolSymbolsWithRegex(
       result.gotos.push({ caller: currentParagraph, target: gotoMatch[1], line: lineNum });
     }
 
-    // SORT / MERGE file references (multi-file USING/GIVING)
-    // Uses indexOf+substring instead of nested-quantifier regex to avoid ReDoS
+    // SORT / MERGE file references (multi-line: accumulate until period)
+    if (sortAccum !== null) {
+      // Continue accumulating SORT/MERGE statement
+      sortAccum += ' ' + line;
+      if (!/\.\s*$/.test(sortAccum)) return; // still accumulating — skip other extractors
+    }
     const sortMatch = line.match(RE_SORT) || line.match(RE_MERGE);
-    if (sortMatch) {
-      const upper = line.toUpperCase();
-      const usingIdx = upper.search(/\bUSING\s/);
-      const givingIdx = upper.search(/\bGIVING\s/);
-      const usingFiles: string[] = [];
-      const givingFiles: string[] = [];
-      if (usingIdx >= 0) {
-        const afterUsing = line.substring(usingIdx + 6);
-        const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
-        const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
-        usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+    if (sortMatch && sortAccum === null) {
+      sortAccum = line;
+      sortStartLine = lineNum;
+      if (!/\.\s*$/.test(sortAccum)) return; // multi-line — wait for period
+    }
+    // Flush when accumulated statement ends with period
+    if (sortAccum !== null && /\.\s*$/.test(sortAccum)) {
+      const fullSort = sortAccum;
+      const smatch = fullSort.match(RE_SORT) || fullSort.match(RE_MERGE);
+      if (smatch) {
+        const upper = fullSort.toUpperCase();
+        const usingIdx = upper.search(/\bUSING\s/);
+        const givingIdx = upper.search(/\bGIVING\s/);
+        const usingFiles: string[] = [];
+        const givingFiles: string[] = [];
+        if (usingIdx >= 0) {
+          const afterUsing = fullSort.substring(usingIdx + 6);
+          const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
+          const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
+          usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+        }
+        if (givingIdx >= 0) {
+          const givingText = fullSort.substring(givingIdx + 7);
+          givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+        }
+        result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
       }
-      if (givingIdx >= 0) {
-        const givingText = line.substring(givingIdx + 7);
-        givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
-      }
-      result.sorts.push({
-        sortFile: sortMatch[1],
-        usingFiles,
-        givingFiles,
-        line: lineNum,
-      });
+      sortAccum = null;
     }
 
     // SEARCH — table access

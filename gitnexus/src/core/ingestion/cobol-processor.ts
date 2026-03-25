@@ -198,15 +198,16 @@ export const processCobol = (
     const resolvedId = moduleNodeIds.get(match[1]);
     if (!resolvedId) return;
 
-    if (rel.reason?.startsWith('cobol-call-unresolved')) {
-      // Replace unresolved CALL with resolved edge
+    if (rel.reason?.startsWith('cobol-call-unresolved') || rel.reason === 'cobol-cancel-unresolved') {
+      // Replace unresolved CALL/CANCEL with resolved edge
+      const resolvedReason = rel.reason === 'cobol-cancel-unresolved' ? 'cobol-cancel' : 'cobol-call';
       graph.addRelationship({
         id: rel.id + ':resolved',
         type: 'CALLS',
         sourceId: rel.sourceId,
         targetId: resolvedId,
-        confidence: 0.95,
-        reason: 'cobol-call',
+        confidence: rel.reason === 'cobol-cancel-unresolved' ? 0.9 : 0.95,
+        reason: resolvedReason,
       });
     } else if (rel.reason === 'cics-link-unresolved' || rel.reason === 'cics-xctl-unresolved') {
       // Replace unresolved CICS LINK/XCTL with resolved edge
@@ -887,19 +888,19 @@ function mapToGraph(
     }
   }
 
-  // ── CANCEL -> CALLS edges ──────────────────────────────────────
+  // ── CANCEL -> CALLS edges (with two-pass resolution like CALL) ──
   for (const cancel of extracted.cancels) {
     const targetModuleId = moduleNodeIds.get(cancel.target.toUpperCase());
-    if (targetModuleId) {
-      graph.addRelationship({
-        id: generateId('CALLS', `${parentId}->cancel->${cancel.target}:L${cancel.line}`),
-        type: 'CALLS',
-        sourceId: parentId,
-        targetId: targetModuleId,
-        confidence: 0.9,
-        reason: 'cobol-cancel',
-      });
-    }
+    const targetId = targetModuleId
+      ?? generateId('Module', `<unresolved>:${cancel.target.toUpperCase()}`);
+    graph.addRelationship({
+      id: generateId('CALLS', `${parentId}->cancel->${cancel.target}:L${cancel.line}`),
+      type: 'CALLS',
+      sourceId: parentId,
+      targetId,
+      confidence: targetModuleId ? 0.9 : 0.5,
+      reason: targetModuleId ? 'cobol-cancel' : 'cobol-cancel-unresolved',
+    });
   }
 }
 
