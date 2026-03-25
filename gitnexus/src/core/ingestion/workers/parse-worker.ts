@@ -729,6 +729,7 @@ const processBatch = (
     toolDefs: [],
     ormQueries: [],
     webhooks: [],
+    queuePatterns: [],
     constructorBindings: [],
     fileScopeBindings: [],
     skippedLanguages: {},
@@ -1356,10 +1357,18 @@ export function extractORMQueries(
 // Webhook/Event Handler Extraction
 // ============================================================================
 
-function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
-  // Skip test files — they often mock webhook patterns
-  const lp = filePath.toLowerCase();
-  if (lp.includes('/test') || lp.includes('.test.') || lp.includes('.spec.') || lp.includes('__test')) return;
+export function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
+  const lowerPath = filePath.toLowerCase();
+
+  // Skip test files — they often mock webhook patterns (e.g. Stripe constructEvent in test mocks)
+  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+
+  // Count newlines before offset without allocating substring + split array
+  const lineAt = (offset: number): number => {
+    let n = 0;
+    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    return n;
+  };
 
   if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
     const eventTypes: string[] = [];
@@ -1368,14 +1377,13 @@ function extractWebhooks(filePath: string, content: string, out: ExtractedWebhoo
     while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
     const idx = content.indexOf('constructEvent');
     out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
-      lineNumber: idx > -1 ? content.substring(0, idx).split('\n').length - 1 : 0 });
+      lineNumber: idx > -1 ? lineAt(idx) : 0 });
     return;
   }
   const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
   if (edgeFnMatch && content.includes('Deno.serve')) {
-    const idx = content.indexOf('Deno.serve');
     out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
-      lineNumber: content.substring(0, idx).split('\n').length - 1 });
+      lineNumber: lineAt(content.indexOf('Deno.serve')) });
     return;
   }
   if (content.includes('postgres_changes')) {
@@ -1383,10 +1391,9 @@ function extractWebhooks(filePath: string, content: string, out: ExtractedWebhoo
     let m;
     while ((m = channelRe.exec(content)) !== null) {
       out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
-        lineNumber: content.substring(0, m.index).split('\n').length - 1 });
+        lineNumber: lineAt(m.index) });
     }
   }
-  const lowerPath = filePath.toLowerCase();
   if (lowerPath.includes('webhook') || lowerPath.includes('hook')) {
     const hasSigVerify = content.includes('x-webhook-signature') || content.includes('x-hub-signature')
       || content.includes('verify');

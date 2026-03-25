@@ -337,7 +337,11 @@ Returns: tool nodes with their handler files and descriptions.`,
   },
   {
     name: 'webhook_map',
-    description: `Show webhook and event handler endpoints: Stripe webhooks, Supabase Edge Functions, and realtime subscriptions.\n\nWHEN TO USE: Understanding event-driven architecture, finding webhook handlers, tracing event flows.\n\nReturns: webhook nodes with handler files, kind, event types, and TRIGGERS edges.`,
+    description: `Show webhook and event handler endpoints: Stripe webhooks, Supabase Edge Functions, and realtime subscriptions.
+
+WHEN TO USE: Understanding event-driven architecture, finding webhook handlers, tracing event flows.
+
+Returns: webhook nodes with handler files, kind, event types, and TRIGGERS edges.`,
     inputSchema: {
       type: 'object',
       properties: {
