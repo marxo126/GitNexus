@@ -115,10 +115,10 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
   const defaultFunctionExportRe = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/;
   // Handle `export default <identifier>` while avoiding mis-parsing `function`
   const defaultIdentifierExportRe = /export\s+default\s+(?!function\b)(\w+)/;
-  // Also detect `export const middleware = ...`
-  const isConstMw = /export\s+const\s+middleware\s*=/.test(content);
+  // Arrow function const export: export const middleware = (req) => ...
+  const constMiddlewareExportRe = /export\s+const\s+middleware\s*=/;
 
-  if (namedMiddlewareExportRe.test(content) || isConstMw) {
+  if (namedMiddlewareExportRe.test(content) || constMiddlewareExportRe.test(content)) {
     exportedName = 'middleware';
   } else {
     const defaultFunctionMatch = defaultFunctionExportRe.exec(content);
@@ -163,7 +163,8 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
 
   // A middleware.ts with an export but no config.matcher applies to all routes.
   // Only return undefined when there is truly no middleware export detected.
-  const hasMiddlewareExport = namedMiddlewareExportRe.test(content) || isConstMw ||
+  const hasMiddlewareExport = namedMiddlewareExportRe.test(content) ||
+    constMiddlewareExportRe.test(content) ||
     defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
   if (!hasMiddlewareExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
 
@@ -205,6 +206,10 @@ export function compiledMatcherMatchesRoute(cm: CompiledMatcher, routeURL: strin
   }
 }
 
+/**
+ * Test whether a route URL matches a Next.js middleware matcher pattern.
+ * Convenience wrapper — for batch use, prefer compileMatcher + compiledMatcherMatchesRoute.
+ */
 export function middlewareMatcherMatchesRoute(matcher: string, routeURL: string): boolean {
   const cm = compileMatcher(matcher);
   return cm ? compiledMatcherMatchesRoute(cm, routeURL) : false;

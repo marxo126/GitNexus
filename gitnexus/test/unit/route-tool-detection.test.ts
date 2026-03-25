@@ -587,6 +587,7 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.exportedName).toBe('middleware');
   });
 
+
   it('detects arrow function const export', () => {
     const content = `
       export const middleware = (req) => {
