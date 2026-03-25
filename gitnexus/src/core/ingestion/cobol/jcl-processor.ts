@@ -115,6 +115,13 @@ function integrateJclResults(
     jobCount++;
   }
 
+  // 1.5 Pre-register in-stream PROCs so steps can reference them
+  // (fixes ordering bug: steps processed before PROCs were registered)
+  for (const proc of parsed.procs) {
+    const procId = generateId('Module', `${filePath}:proc:${proc.name}`);
+    moduleNames.set(proc.name.toUpperCase(), procId);
+  }
+
   // 2. Create Step nodes and link to programs
   for (const step of parsed.steps) {
     const stepId = generateId('CodeElement', `${filePath}:step:${step.jobName}:${step.name}`);

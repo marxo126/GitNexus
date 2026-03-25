@@ -111,7 +111,7 @@ export interface CobolRegexResults {
 
   // Phase 4: Additional structural features
   gotos: Array<{ caller: string | null; target: string; line: number }>;
-  sorts: Array<{ sortFile: string; usingFile?: string; givingFile?: string; line: number }>;
+  sorts: Array<{ sortFile: string; usingFiles: string[]; givingFiles: string[]; line: number }>;
   searches: Array<{ target: string; line: number }>;
   cancels: Array<{ target: string; line: number }>;
 }
@@ -125,11 +125,11 @@ export interface CobolRegexResults {
  *
  * The COBOL fixed-format sequence number area (columns 1-6) is semantically
  * irrelevant to parsing — compilers and tools always ignore it.  This
- * function replaces non-numeric, non-space content in columns 1-6 with spaces
+ * function replaces ANY non-space content in columns 1-6 with spaces
  * so that position-sensitive regexes (paragraph/section detection, data-item
- * anchors, etc.) work identically whether the file carries alphabetic patch
- * markers (mzADD, estero, #patch, …) or the COBOL default of all spaces.
- * Numeric sequence numbers (000100 … 999999) are preserved.
+ * anchors, etc.) work identically whether the file carries numeric sequence
+ * numbers (000100), alphabetic patch markers (mzADD, estero, #patch), or
+ * the COBOL default of all spaces.
  *
  * Preserves exact line count for position mapping.
  */
@@ -144,11 +144,10 @@ export function preprocessCobolSource(content: string): string {
     const line = lines[i];
     if (line.length < 7) continue;
     const seq = line.substring(0, 6);
-    // Replace non-numeric non-space characters in the sequence area.
-    // This covers alphabetic patch markers (mzADD, estero), '#'-prefixed
-    // markers, '$'/'@'/'*' change tracking — while preserving standard
-    // numeric sequence numbers (000100) and all-space areas.
-    if (/[^0-9 ]/.test(seq)) {
+    // Replace any non-space content in the sequence area with spaces.
+    // This covers numeric sequence numbers (000100), alphabetic patch markers
+    // (mzADD, estero), '#'-prefixed markers, and all other col 1-6 content.
+    if (/\S/.test(seq)) {
       lines[i] = '      ' + line.substring(6);
     }
   }
@@ -826,7 +825,9 @@ export function extractCobolSymbolsWithRegex(
           currentParagraph = null;
           const procUsingMatch = line.match(RE_PROC_USING);
           if (procUsingMatch) {
-            result.procedureUsing = procUsingMatch[1].trim().split(/\s+/).filter(s => s.length > 0);
+            const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF']);
+            result.procedureUsing = procUsingMatch[1].trim().split(/\s+/)
+              .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
           }
           break;
         }
@@ -1068,7 +1069,9 @@ export function extractCobolSymbolsWithRegex(
       const name = secMatch[1];
       if (!EXCLUDED_PARA_NAMES.has(name.toUpperCase()) && !name.toUpperCase().includes('DIVISION')) {
         result.sections.push({ name, line: lineNum });
-        currentParagraph = name;
+        // Don't set currentParagraph to section name — sections are Namespaces,
+        // not Functions. Setting it here would cause PERFORMs to be attributed
+        // to the section instead of the containing paragraph.
       }
       return;
     }
@@ -1147,29 +1150,25 @@ export function extractCobolSymbolsWithRegex(
       result.gotos.push({ caller: currentParagraph, target: gotoMatch[1], line: lineNum });
     }
 
-    // SORT / MERGE file references
-    const sortMatch = line.match(RE_SORT);
+    // SORT / MERGE file references (multi-file USING/GIVING)
+    const sortMatch = line.match(RE_SORT) || line.match(RE_MERGE);
     if (sortMatch) {
-      const usingMatch = line.match(RE_SORT_USING);
-      const givingMatch = line.match(RE_SORT_GIVING);
+      // Extract all USING files: text between USING and GIVING (or end)
+      const usingSection = line.match(/\bUSING\s+((?:[A-Z][A-Z0-9-]+\s*)+?)(?:\bGIVING\b|$)/i);
+      const usingFiles = usingSection
+        ? usingSection[1].trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f))
+        : [];
+      // Extract all GIVING files
+      const givingSection = line.match(/\bGIVING\s+((?:[A-Z][A-Z0-9-]+\s*)+?)$/i);
+      const givingFiles = givingSection
+        ? givingSection[1].trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f))
+        : [];
       result.sorts.push({
         sortFile: sortMatch[1],
-        usingFile: usingMatch?.[1],
-        givingFile: givingMatch?.[1],
+        usingFiles,
+        givingFiles,
         line: lineNum,
       });
-    } else {
-      const mergeMatch = line.match(RE_MERGE);
-      if (mergeMatch) {
-        const usingMatch = line.match(RE_SORT_USING);
-        const givingMatch = line.match(RE_SORT_GIVING);
-        result.sorts.push({
-          sortFile: mergeMatch[1],
-          usingFile: usingMatch?.[1],
-          givingFile: givingMatch?.[1],
-          line: lineNum,
-        });
-      }
     }
 
     // SEARCH — table access

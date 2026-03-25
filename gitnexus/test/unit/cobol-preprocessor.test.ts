@@ -40,15 +40,15 @@ describe('preprocessCobolSource', () => {
     expect(lines[1].substring(0, 6)).toBe('      ');
   });
 
-  it('preserves standard numeric sequence numbers', () => {
+  it('strips numeric sequence numbers from cols 1-6', () => {
     const input = cobol(
       '000100 IDENTIFICATION DIVISION.',
       '000200 PROGRAM-ID. TEST1.',
     );
     const output = preprocessCobolSource(input);
     const lines = output.split('\n');
-    expect(lines[0]).toBe('000100 IDENTIFICATION DIVISION.');
-    expect(lines[1]).toBe('000200 PROGRAM-ID. TEST1.');
+    expect(lines[0]).toBe('       IDENTIFICATION DIVISION.');
+    expect(lines[1]).toBe('       PROGRAM-ID. TEST1.');
   });
 
   it('preserves lines shorter than 7 characters', () => {

@@ -844,10 +844,10 @@ function mapToGraph(
   // ── SORT/MERGE -> ACCESSES edges ──────────────────────────────
   for (const sort of extracted.sorts) {
     const sortFileId = generateId('Record', `${filePath}:${sort.sortFile}`);
-    if (sort.usingFile) {
-      const usingId = generateId('Record', `${filePath}:${sort.usingFile}`);
+    for (const usingFile of sort.usingFiles) {
+      const usingId = generateId('Record', `${filePath}:${usingFile}`);
       graph.addRelationship({
-        id: generateId('ACCESSES', `${parentId}->sort-using->${sort.usingFile}:L${sort.line}`),
+        id: generateId('ACCESSES', `${parentId}->sort-using->${usingFile}:L${sort.line}`),
         type: 'ACCESSES',
         sourceId: sortFileId,
         targetId: usingId,
@@ -855,10 +855,10 @@ function mapToGraph(
         reason: 'sort-using',
       });
     }
-    if (sort.givingFile) {
-      const givingId = generateId('Record', `${filePath}:${sort.givingFile}`);
+    for (const givingFile of sort.givingFiles) {
+      const givingId = generateId('Record', `${filePath}:${givingFile}`);
       graph.addRelationship({
-        id: generateId('ACCESSES', `${parentId}->sort-giving->${sort.givingFile}:L${sort.line}`),
+        id: generateId('ACCESSES', `${parentId}->sort-giving->${givingFile}:L${sort.line}`),
         type: 'ACCESSES',
         sourceId: sortFileId,
         targetId: givingId,
