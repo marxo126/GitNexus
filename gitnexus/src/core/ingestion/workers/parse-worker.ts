@@ -1357,6 +1357,10 @@ export function extractORMQueries(
 // ============================================================================
 
 function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
+  // Skip test files — they often mock webhook patterns
+  const lp = filePath.toLowerCase();
+  if (lp.includes('/test') || lp.includes('.test.') || lp.includes('.spec.') || lp.includes('__test')) return;
+
   if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
     const eventTypes: string[] = [];
     const caseRe = /case\s+['"]([.\w-]+)['"]/g;
