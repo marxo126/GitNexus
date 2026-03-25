@@ -16,7 +16,7 @@ import { phpFileToRouteURL } from './route-extractors/php.js';
 import { extractResponseShapes, extractPHPResponseShapes } from './route-extractors/response-shapes.js';
 import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, compiledMatcherMatchesRoute } from './route-extractors/middleware.js';
 import { generateId } from '../../lib/utils.js';
-import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedORMQuery } from './workers/parse-worker.js';
+import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedWebhook, ExtractedORMQuery } from './workers/parse-worker.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
@@ -544,6 +544,7 @@ async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allWebhooks: ExtractedWebhook[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -664,7 +665,8 @@ async function runChunkedParseAndResolve(
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   // Accumulate MCP/RPC tool definitions (@mcp.tool(), @app.tool(), etc.)
   const allToolDefs: ExtractedToolDef[] = [];
-    const allORMQueries: ExtractedORMQuery[] = [];
+  const allORMQueries: ExtractedORMQuery[] = [];
+  const allWebhooks: ExtractedWebhook[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -796,6 +798,9 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.ormQueries?.length) {
           allORMQueries.push(...chunkWorkerData.ormQueries);
         }
+        if (chunkWorkerData.webhooks?.length) {
+          allWebhooks.push(...chunkWorkerData.webhooks);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -891,7 +896,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks };
 }
 
 /**
@@ -1113,7 +1118,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1381,6 +1386,25 @@ export const runPipelineFromRepo = async (
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
+    }
+
+    // ── Phase 3.8: Webhook/Event Handler Detection ──────────────────
+    if (allWebhooks.length > 0) {
+      const seenWebhookNames = new Set<string>();
+      let webhookCount = 0;
+      for (const wh of allWebhooks) {
+        if (seenWebhookNames.has(wh.name)) continue;
+        seenWebhookNames.add(wh.name);
+        const webhookNodeId = generateId('Webhook', wh.name);
+        graph.addNode({ id: webhookNodeId, label: 'Webhook',
+          properties: { name: wh.name, filePath: wh.filePath, kind: wh.kind, eventTypes: wh.eventTypes } });
+        const handlerFileId = generateId('File', wh.filePath);
+        graph.addRelationship({ id: generateId('TRIGGERS', `${handlerFileId}->${webhookNodeId}`),
+          sourceId: handlerFileId, targetId: webhookNodeId, type: 'TRIGGERS',
+          confidence: 1.0, reason: `webhook-handler:${wh.kind}` });
+        webhookCount++;
+      }
+      if (isDev) { console.log(`Webhook detection: ${webhookCount} webhooks detected`); }
     }
 
     // ── Phase 14: Cross-file binding propagation (topological level sort) ──

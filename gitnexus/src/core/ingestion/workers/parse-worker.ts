@@ -192,6 +192,23 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+export interface ExtractedWebhook {
+  filePath: string;
+  name: string;
+  kind: 'stripe' | 'bullmq-consumer' | 'bullmq-producer' | 'edge-function' | 'realtime' | 'generic';
+  eventTypes: string[];
+  lineNumber: number;
+}
+
+export interface ExtractedQueuePattern {
+  filePath: string;
+  role: 'producer' | 'consumer';
+  queueName: string;
+  method?: string;
+  handlerName?: string;
+  lineNumber: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -218,6 +235,8 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  webhooks: ExtractedWebhook[];
+  queuePatterns: ExtractedQueuePattern[];
   constructorBindings: FileConstructorBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
   typeEnvBindings: FileTypeEnvBindings[];
@@ -384,6 +403,7 @@ const processBatch = (files: ParseWorkerInput[], onProgress?: (filesProcessed: n
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    webhooks: [],
     constructorBindings: [],
     typeEnvBindings: [],
     skippedLanguages: {},
@@ -899,6 +919,48 @@ export function extractORMQueries(filePath: string, content: string, out: Extrac
         method: m[2],
         lineNumber: content.substring(0, m.index).split('\n').length - 1,
       });
+    }
+  }
+}
+
+// ============================================================================
+// Webhook/Event Handler Extraction
+// ============================================================================
+
+function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
+  if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
+    const eventTypes: string[] = [];
+    const caseRe = /case\s+['"]([.\w-]+)['"]/g;
+    let m;
+    while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
+    const idx = content.indexOf('constructEvent');
+    out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
+      lineNumber: idx > -1 ? content.substring(0, idx).split('\n').length - 1 : 0 });
+    return;
+  }
+  const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
+  if (edgeFnMatch && content.includes('Deno.serve')) {
+    const idx = content.indexOf('Deno.serve');
+    out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
+      lineNumber: content.substring(0, idx).split('\n').length - 1 });
+    return;
+  }
+  if (content.includes('postgres_changes')) {
+    const channelRe = /\.channel\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+    let m;
+    while ((m = channelRe.exec(content)) !== null) {
+      out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
+        lineNumber: content.substring(0, m.index).split('\n').length - 1 });
+    }
+  }
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.includes('webhook') || lowerPath.includes('hook')) {
+    const hasSigVerify = content.includes('x-webhook-signature') || content.includes('x-hub-signature')
+      || content.includes('verify');
+    if (hasSigVerify) {
+      const pathParts = filePath.split('/');
+      const name = pathParts[pathParts.length - 1].replace(/\.(ts|js|tsx|jsx)$/, '');
+      out.push({ filePath, name: `webhook:${name}`, kind: 'generic', eventTypes: [], lineNumber: 0 });
     }
   }
 }
@@ -1427,6 +1489,8 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, file.content, result.ormQueries);
+    extractWebhooks(file.path, file.content, result.webhooks);
+    extractQueuePatterns(file.path, file.content, result.queuePatterns);
   }
 };
 
@@ -1437,7 +1501,7 @@ const processFileGroup = (
 /** Accumulated result across sub-batches */
 let accumulated: ParseWorkerResult = {
   nodes: [], relationships: [], symbols: [],
-  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
+  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
 };
 let cumulativeProcessed = 0;
 
@@ -1454,6 +1518,8 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.decoratorRoutes.push(...src.decoratorRoutes);
   target.toolDefs.push(...src.toolDefs);
   target.ormQueries.push(...src.ormQueries);
+  target.webhooks.push(...src.webhooks);
+  target.queuePatterns.push(...src.queuePatterns);
   target.constructorBindings.push(...src.constructorBindings);
   target.typeEnvBindings.push(...src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
@@ -1480,7 +1546,7 @@ parentPort!.on('message', (msg: any) => {
     if (msg && msg.type === 'flush') {
       parentPort!.postMessage({ type: 'result', data: accumulated });
       // Reset for potential reuse
-      accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
+      accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
       cumulativeProcessed = 0;
       return;
     }
