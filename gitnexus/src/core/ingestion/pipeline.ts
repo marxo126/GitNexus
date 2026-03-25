@@ -17,7 +17,6 @@ import { extractResponseShapes, extractPHPResponseShapes } from './route-extract
 import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, compiledMatcherMatchesRoute } from './route-extractors/middleware.js';
 import { generateId } from '../../lib/utils.js';
 import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedORMQuery, ExtractedQueuePattern } from './workers/parse-worker.js';
-import { extractQueuePatterns } from './workers/parse-worker.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
@@ -841,7 +840,29 @@ async function runChunkedParseAndResolve(
     for (const f of chunkFiles) {
       extractORMQueriesInline(f.path, f.content, allORMQueries);
     }
-    for (const f of chunkFiles) { extractQueuePatterns(f.path, f.content, allQueuePatterns); }
+    for (const f of chunkFiles) {
+      // Inline BullMQ + Temporal queue detection (avoids importing parse-worker worker-thread code)
+      const hasBullMQ = f.content.includes('new Queue') || f.content.includes('new Worker');
+      const hasTemporal = f.content.includes('activities.') || f.content.includes('client.workflow.');
+      if (hasBullMQ || hasTemporal) {
+        if (hasBullMQ) {
+          const qvMap = new Map<string, string>();
+          const qRe = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['"](\w[\w-]*)['\"]/g;
+          let m; while ((m = qRe.exec(f.content)) !== null) { qvMap.set(m[1], m[2]); }
+          const aRe = /(\w+)\.(add|addBulk)\s*\(/g; aRe.lastIndex = 0;
+          while ((m = aRe.exec(f.content)) !== null) { const qn = qvMap.get(m[1]); if (qn) allQueuePatterns.push({ filePath: f.path, role: 'producer', queueName: qn, method: m[2], lineNumber: f.content.substring(0, m.index).split('\n').length - 1 }); }
+          const wRe = /new\s+Worker\s*\(\s*['"](\w[\w-]*)['\"]/g; wRe.lastIndex = 0;
+          while ((m = wRe.exec(f.content)) !== null) { allQueuePatterns.push({ filePath: f.path, role: 'consumer', queueName: m[1], lineNumber: f.content.substring(0, m.index).split('\n').length - 1 }); }
+        }
+        if (hasTemporal) {
+          let m;
+          const actRe = /activities\.(\w+)\s*\(/g; actRe.lastIndex = 0;
+          while ((m = actRe.exec(f.content)) !== null) { allQueuePatterns.push({ filePath: f.path, role: 'activity', queueName: m[1], handlerName: m[1], lineNumber: f.content.substring(0, m.index).split('\n').length - 1 }); }
+          const wfRe = /client\.workflow\.(start|execute)\s*\(\s*(\w+)/g; wfRe.lastIndex = 0;
+          while ((m = wfRe.exec(f.content)) !== null) { allQueuePatterns.push({ filePath: f.path, role: 'workflow', queueName: m[2], method: m[1], lineNumber: f.content.substring(0, m.index).split('\n').length - 1 }); }
+        }
+      }
+    }
     astCache.clear();
   }
 
