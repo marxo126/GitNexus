@@ -4,11 +4,31 @@
  */
 
 /** Keywords that terminate middleware chain walking (not wrapper function names) */
+/** Names that are composition wrappers, not middleware functions themselves. */
+const COMPOSER_NAMES = new Set(['middleware', 'default', 'chain', 'compose']);
+
+/** Keywords that terminate middleware chain walking (not wrapper function names) */
 export const MIDDLEWARE_STOP_KEYWORDS = new Set([
   'async', 'await', 'function', 'new', 'return', 'if', 'for', 'while', 'switch',
   'class', 'const', 'let', 'var', 'req', 'res', 'request', 'response',
   'event', 'ctx', 'context', 'next',
 ]);
+
+
+/** Walk nested wrapper calls starting at `pos` in `content`, returning function names. */
+function walkNestedWrappers(content: string, pos: number): string[] {
+  const names: string[] = [];
+  const nestedRe = /^\s*(\w+)\s*\(/;
+  let remaining = content.slice(pos);
+  let nested;
+  while ((nested = nestedRe.exec(remaining)) !== null) {
+    if (MIDDLEWARE_STOP_KEYWORDS.has(nested[1])) break;
+    names.push(nested[1]);
+    pos += nested[0].length;
+    remaining = content.slice(pos);
+  }
+  return names;
+}
 
 /**
  * Extract middleware wrapper chain from a route handler file.
@@ -23,17 +43,7 @@ export function extractMiddlewareChain(content: string): { chain: string[]; meth
     const method = mwMatch[1] ?? 'default';
     const firstWrapper = mwMatch[2];
     const chain: string[] = [firstWrapper];
-    let pos = mwMatch.index + mwMatch[0].length;
-    const nestedPattern = /^\s*(\w+)\s*\(/;
-    let remaining = content.slice(pos);
-    let nestedMatch;
-    while ((nestedMatch = nestedPattern.exec(remaining)) !== null) {
-      const name = nestedMatch[1];
-      if (MIDDLEWARE_STOP_KEYWORDS.has(name)) break;
-      chain.push(name);
-      pos += nestedMatch[0].length;
-      remaining = content.slice(pos);
-    }
+    chain.push(...walkNestedWrappers(content, mwMatch.index + mwMatch[0].length));
     if (chain.length >= 2 || (chain.length === 1 && /^with[A-Z]/.test(chain[0]))) {
       return { chain, method };
     }
@@ -58,7 +68,6 @@ export interface NextjsMiddlewareConfig {
  * - wrapper composition (e.g. chain([withAuth, withI18n]))
  */
 export function extractNextjsMiddlewareConfig(content: string): NextjsMiddlewareConfig | undefined {
-  // --- matcher patterns ---
   const matchers: string[] = [];
   const matcherArrayRe = /config\s*=\s*\{[^}]*matcher\s*:\s*\[([^\]]*)\]/s;
   const matcherStringRe = /config\s*=\s*\{[^}]*matcher\s*:\s*(['"`])([^'"`]+)\1/s;
@@ -77,29 +86,17 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     }
   }
 
-  // --- exported name ---
   let exportedName = 'middleware';
-  // Prefer an explicitly exported `middleware` function (named export)
-  const namedMiddlewareExportRe = /export\s+(?:async\s+)?function\s+middleware\b/;
-  // Handle `export default (async )?function <name>?`
-  const defaultFunctionExportRe = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/;
-  // Handle `export default <identifier>` while avoiding mis-parsing `function`
-  const defaultIdentifierExportRe = /export\s+default\s+(?!function\b)(\w+)/;
+  const isNamedMw = /export\s+(?:async\s+)?function\s+middleware\b/.test(content);
+  const isConstMw = /export\s+const\s+middleware\s*=/.test(content);
+  const defaultFunctionMatch = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/.exec(content);
+  const defaultIdentifierMatch = /export\s+default\s+(?!function\b)(\w+)/.exec(content);
 
-  // Arrow function const export: export const middleware = (req) => ...
-  const constMiddlewareExportRe = /export\s+const\s+middleware\s*=/;
-
-  if (namedMiddlewareExportRe.test(content) || constMiddlewareExportRe.test(content)) {
-    exportedName = 'middleware';
-  } else {
-    const defaultFunctionMatch = defaultFunctionExportRe.exec(content);
+  if (!isNamedMw && !isConstMw) {
     if (defaultFunctionMatch) {
       exportedName = defaultFunctionMatch[1] ?? 'middleware';
-    } else {
-      const defaultIdentifierMatch = defaultIdentifierExportRe.exec(content);
-      if (defaultIdentifierMatch) {
-        exportedName = defaultIdentifierMatch[1];
-      }
+    } else if (defaultIdentifierMatch) {
+      exportedName = defaultIdentifierMatch[1];
     }
   }
 
@@ -119,31 +116,16 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     const name = wrapperMatch[1];
     if (name !== 'function' && name !== 'async') {
       wrappedFunctions.push(name);
-      let pos = wrapperMatch.index + wrapperMatch[0].length;
-      const nestedRe = /^\s*(\w+)\s*\(/;
-      let remaining = content.slice(pos);
-      let nested;
-      while ((nested = nestedRe.exec(remaining)) !== null) {
-        if (MIDDLEWARE_STOP_KEYWORDS.has(nested[1])) break;
-        wrappedFunctions.push(nested[1]);
-        pos += nested[0].length;
-        remaining = content.slice(pos);
-      }
+      wrappedFunctions.push(...walkNestedWrappers(content, wrapperMatch.index + wrapperMatch[0].length));
     }
   }
 
-  // If the exported function name is meaningful, include it (skip composer names)
-  const composerNames = new Set(['middleware', 'default', 'chain', 'compose']);
-  if (!composerNames.has(exportedName) && !wrappedFunctions.includes(exportedName)) {
+  if (!COMPOSER_NAMES.has(exportedName) && !wrappedFunctions.includes(exportedName)) {
     wrappedFunctions.unshift(exportedName);
   }
 
-  // A middleware.ts with an export but no config.matcher applies to all routes.
-  // Only return undefined when there is truly no middleware export detected.
-  const hasMiddlewareExport = namedMiddlewareExportRe.test(content) ||
-    constMiddlewareExportRe.test(content) ||
-    defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
-  if (!hasMiddlewareExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
+  const hasExport = isNamedMw || isConstMw || !!defaultFunctionMatch || !!defaultIdentifierMatch;
+  if (!hasExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
 
   return { matchers, exportedName, wrappedFunctions };
 }
@@ -177,10 +159,6 @@ export function compiledMatcherMatchesRoute(cm: CompiledMatcher, routeURL: strin
   }
 }
 
-/**
- * Test whether a route URL matches a Next.js middleware matcher pattern.
- * Convenience wrapper — for batch use, prefer compileMatcher + compiledMatcherMatchesRoute.
- */
 export function middlewareMatcherMatchesRoute(matcher: string, routeURL: string): boolean {
   const cm = compileMatcher(matcher);
   return cm ? compiledMatcherMatchesRoute(cm, routeURL) : false;
