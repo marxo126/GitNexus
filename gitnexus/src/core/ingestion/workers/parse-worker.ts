@@ -202,6 +202,16 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+export interface ExtractedQueuePattern {
+  filePath: string;
+  role: 'producer' | 'consumer' | 'workflow' | 'activity';
+  queueName: string;
+  method?: string;
+  handlerName?: string;
+  lineNumber: number;
+}
+
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -228,6 +238,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  queuePatterns: ExtractedQueuePattern[];
   constructorBindings: FileConstructorBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
   typeEnvBindings: FileTypeEnvBindings[];
@@ -436,6 +447,28 @@ const cachedExportCheck = (checker: (node: any, name: string) => boolean, node: 
 // DEFINITION_CAPTURE_KEYS and getDefinitionNodeFromCaptures imported from ../utils.js
 
 
+
+// BullMQ + Temporal Queue Pattern Extraction
+const BULLMQ_ADD_RE = /(\w+)\.(add|addBulk)\s*\(/g;
+const BULLMQ_WORKER_RE = /new\s+Worker\s*\(\s*['"](\w[\w-]*)['"]/g;
+const TEMPORAL_ACTIVITY_RE = /activities\.(\w+)\s*\(/g;
+const TEMPORAL_WORKFLOW_START_RE = /client\.workflow\.(start|execute)\s*\(\s*(\w+)/g;
+export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
+  const hasBullMQ = content.includes('new Queue') || content.includes('new Worker');
+  const hasTemporal = content.includes('activities.') || content.includes('client.workflow.');
+  if (!hasBullMQ && !hasTemporal) return;
+  if (hasBullMQ) {
+    const queueVarMap = new Map<string, string>(); const assignRe = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['"](\w[\w-]*)['"]/g; assignRe.lastIndex = 0; let m;
+    while ((m = assignRe.exec(content)) !== null) { queueVarMap.set(m[1], m[2]); }
+    BULLMQ_ADD_RE.lastIndex = 0; while ((m = BULLMQ_ADD_RE.exec(content)) !== null) { const qn = queueVarMap.get(m[1]); if (qn) { out.push({ filePath, role: 'producer', queueName: qn, method: m[2], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); } }
+    BULLMQ_WORKER_RE.lastIndex = 0; while ((m = BULLMQ_WORKER_RE.exec(content)) !== null) { out.push({ filePath, role: 'consumer', queueName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+  }
+  if (hasTemporal) { let m;
+    TEMPORAL_ACTIVITY_RE.lastIndex = 0; while ((m = TEMPORAL_ACTIVITY_RE.exec(content)) !== null) { out.push({ filePath, role: 'activity', queueName: m[1], handlerName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+    TEMPORAL_WORKFLOW_START_RE.lastIndex = 0; while ((m = TEMPORAL_WORKFLOW_START_RE.exec(content)) !== null) { out.push({ filePath, role: 'workflow', queueName: m[2], method: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+  }
+}
+
 // ============================================================================
 // Process a batch of files
 // ============================================================================
@@ -454,6 +487,7 @@ const processBatch = (files: ParseWorkerInput[], onProgress?: (filesProcessed: n
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    queuePatterns: [],
     constructorBindings: [],
     typeEnvBindings: [],
     skippedLanguages: {},
@@ -1538,6 +1572,7 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, file.content, result.ormQueries);
+    extractQueuePatterns(file.path, file.content, result.queuePatterns);
   }
 };
 
@@ -1548,7 +1583,7 @@ const processFileGroup = (
 /** Accumulated result across sub-batches */
 let accumulated: ParseWorkerResult = {
   nodes: [], relationships: [], symbols: [],
-  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
+  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
 };
 let cumulativeProcessed = 0;
 
@@ -1565,6 +1600,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.decoratorRoutes.push(...src.decoratorRoutes);
   target.toolDefs.push(...src.toolDefs);
   target.ormQueries.push(...src.ormQueries);
+  target.queuePatterns.push(...src.queuePatterns);
   target.constructorBindings.push(...src.constructorBindings);
   target.typeEnvBindings.push(...src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
@@ -1591,7 +1627,7 @@ parentPort!.on('message', (msg: any) => {
     if (msg && msg.type === 'flush') {
       parentPort!.postMessage({ type: 'result', data: accumulated });
       // Reset for potential reuse
-      accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
+      accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
       cumulativeProcessed = 0;
       return;
     }
