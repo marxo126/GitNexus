@@ -17,8 +17,8 @@ const MUTATING_TOOLS = new Set(['rename', 'group_sync']);
 const OPEN_WORLD_READ_ONLY_TOOLS = new Set(['query']);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 2 group)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(13);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group + 1 webhook_map)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(17);
   });
 
   it('contains all expected tool names', () => {
