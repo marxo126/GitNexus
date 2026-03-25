@@ -15,6 +15,7 @@
 
 import path from 'node:path';
 import { generateId } from '../../lib/utils.js';
+import { SupportedLanguages } from '../../config/supported-languages.js';
 import type { KnowledgeGraph, GraphNode } from '../graph/types.js';
 import {
   preprocessCobolSource,
@@ -297,7 +298,7 @@ function mapToGraph(
         filePath,
         startLine: 1,
         endLine: lines.length,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         isExported: true,
       },
     });
@@ -331,7 +332,7 @@ function mapToGraph(
         filePath,
         startLine: prog.startLine,
         endLine: prog.endLine,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         isExported: true,
         description: 'nested-program',
       },
@@ -373,7 +374,7 @@ function mapToGraph(
         filePath,
         startLine: sec.line,
         endLine: nextLine,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         isExported: true,
       },
     });
@@ -404,7 +405,7 @@ function mapToGraph(
         filePath,
         startLine: para.line,
         endLine: nextLine,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         isExported: true,
       },
     });
@@ -433,7 +434,7 @@ function mapToGraph(
         filePath,
         startLine: item.line,
         endLine: item.line,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         description: `level:${item.level} section:${item.section}${item.pic ? ` pic:${item.pic}` : ''}`,
       },
     });
@@ -497,7 +498,7 @@ function mapToGraph(
           filePath,
           startLine: call.line,
           endLine: call.line,
-          language: 'cobol' as any,
+          language: SupportedLanguages.Cobol,
           description: 'dynamic-call (target is a data item, not resolvable statically)',
         },
       });
@@ -552,7 +553,7 @@ function mapToGraph(
         filePath,
         startLine: sql.line,
         endLine: sql.line,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         description: `tables:[${sql.tables.join(',')}] cursors:[${sql.cursors.join(',')}]`,
       },
     });
@@ -592,7 +593,7 @@ function mapToGraph(
         filePath,
         startLine: cics.line,
         endLine: cics.line,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         description: [
           cics.mapName && `map:${cics.mapName}`,
           cics.programName && `program:${cics.programName}${cics.programIsLiteral === false ? ' (dynamic)' : ''}`,
@@ -621,7 +622,7 @@ function mapToGraph(
           properties: {
             name: `CICS ${cics.command} ${cics.programName}`,
             filePath, startLine: cics.line, endLine: cics.line,
-            language: 'cobol' as any,
+            language: SupportedLanguages.Cobol,
             description: `cics-dynamic-program (target is data item ${cics.programName})`,
           },
         });
@@ -747,7 +748,7 @@ function mapToGraph(
         filePath,
         startLine: entry.line,
         endLine: entry.line,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         isExported: true,
         description: entry.parameters.length > 0 ? `using:${entry.parameters.join(',')}` : undefined,
       },
@@ -810,7 +811,7 @@ function mapToGraph(
         filePath,
         startLine: fd.line,
         endLine: fd.line,
-        language: 'cobol' as any,
+        language: SupportedLanguages.Cobol,
         description: `assign:${fd.assignTo}${fd.organization ? ` org:${fd.organization}` : ''}${fd.access ? ` access:${fd.access}` : ''}`,
       },
     });

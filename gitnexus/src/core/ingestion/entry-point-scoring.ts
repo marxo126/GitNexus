@@ -212,6 +212,7 @@ export const ENTRY_POINT_PATTERNS = {
     /^perform$/,              // Background jobs (Sidekiq, ActiveJob)
     /^execute$/,              // Command pattern
   ],
+  [SupportedLanguages.Cobol]: [], // Standalone regex processor — no tree-sitter entry points
 } satisfies Record<SupportedLanguages, RegExp[]>;
 
 /** Pre-computed merged patterns (universal + language-specific) to avoid per-call array allocation. */
