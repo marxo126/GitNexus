@@ -79,14 +79,25 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
 
   // --- exported name ---
   let exportedName = 'middleware';
-  const defaultExportRe = /export\s+default\s+(\w+)/;
-  const namedExportRe = /export\s+(?:async\s+)?function\s+(\w+)/;
-  const defaultMatch = defaultExportRe.exec(content);
-  const namedMatch = namedExportRe.exec(content);
-  if (defaultMatch) {
-    exportedName = defaultMatch[1];
-  } else if (namedMatch) {
-    exportedName = namedMatch[1];
+  // Prefer an explicitly exported `middleware` function (named export)
+  const namedMiddlewareExportRe = /export\s+(?:async\s+)?function\s+middleware\b/;
+  // Handle `export default (async )?function <name>?`
+  const defaultFunctionExportRe = /export\s+default\s+(?:async\s+)?function(?:\s+(\w+))?/;
+  // Handle `export default <identifier>` while avoiding mis-parsing `function`
+  const defaultIdentifierExportRe = /export\s+default\s+(?!function\b)(\w+)/;
+
+  if (namedMiddlewareExportRe.test(content)) {
+    exportedName = 'middleware';
+  } else {
+    const defaultFunctionMatch = defaultFunctionExportRe.exec(content);
+    if (defaultFunctionMatch) {
+      exportedName = defaultFunctionMatch[1] ?? 'middleware';
+    } else {
+      const defaultIdentifierMatch = defaultIdentifierExportRe.exec(content);
+      if (defaultIdentifierMatch) {
+        exportedName = defaultIdentifierMatch[1];
+      }
+    }
   }
 
   // --- wrapper composition ---
@@ -124,7 +135,11 @@ export function extractNextjsMiddlewareConfig(content: string): NextjsMiddleware
     wrappedFunctions.unshift(exportedName);
   }
 
-  if (matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
+  // A middleware.ts with an export but no config.matcher applies to all routes.
+  // Only return undefined when there is truly no middleware export detected.
+  const hasMiddlewareExport = namedMiddlewareExportRe.test(content) ||
+    defaultFunctionExportRe.test(content) || defaultIdentifierExportRe.test(content);
+  if (!hasMiddlewareExport && matchers.length === 0 && wrappedFunctions.length === 0) return undefined;
 
   return { matchers, exportedName, wrappedFunctions };
 }

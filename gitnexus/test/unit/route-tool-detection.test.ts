@@ -541,9 +541,19 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.matchers[0]).toContain('(?!api|_next');
   });
 
-  it('returns undefined for file with no matcher and no wrappers', () => {
+  it('treats middleware without config.matcher as match-all', () => {
     const content = `export function middleware(req) { return NextResponse.next(); }`;
-    expect(extractNextjsMiddlewareConfig(content)).toBeUndefined();
+    const result = extractNextjsMiddlewareConfig(content);
+    expect(result).toBeDefined();
+    expect(result!.matchers).toEqual([]);
+    expect(result!.exportedName).toBe('middleware');
+  });
+
+  it('handles export default function middleware(...)', () => {
+    const content = `export default function middleware(req) { return NextResponse.next(); }`;
+    const result = extractNextjsMiddlewareConfig(content);
+    expect(result).toBeDefined();
+    expect(result!.exportedName).toBe('middleware');
   });
 });
 
