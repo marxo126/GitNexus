@@ -159,7 +159,7 @@ export function preprocessCobolSource(content: string): string {
 // ---------------------------------------------------------------------------
 
 // COBOL calling-convention keywords to filter from USING parameter lists
-const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF']);
+const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF', 'RETURNING']);
 
 const EXCLUDED_PARA_NAMES = new Set([
   'DECLARATIVES', 'END', 'PROCEDURE', 'IDENTIFICATION',
@@ -207,7 +207,7 @@ const RE_88_LEVEL = /^\s*88\s+([A-Z][A-Z0-9-]+)\s+VALUES?\s+(?:ARE\s+)?(.+)/i;
 // These patterns support both fixed-format (7 leading spaces) and free-format (any indentation)
 const RE_PROC_SECTION = /^\s*([A-Z][A-Z0-9-]+)\s+SECTION\.\s*$/i;
 const RE_PROC_PARAGRAPH = /^\s*([A-Z][A-Z0-9-]+)\.\s*$/i;
-const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+THRU\s+([A-Z][A-Z0-9-]+))?/i;
+const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/i;
 
 // ALL DIVISIONS
 // Both double-quoted ("PROG") and single-quoted ('PROG') targets are valid COBOL.

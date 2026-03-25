@@ -389,7 +389,7 @@ function mapToGraph(
       confidence: 1.0,
       reason: 'cobol-section',
     });
-    sectionNodeIds.set(sec.name.toUpperCase(), secId);
+    sectionNodeIds.set(`${owningPgm ?? ''}:${sec.name.toUpperCase()}`, secId);
   }
 
   // ── PARAGRAPHs -> Function nodes ─────────────────────────────────
@@ -414,7 +414,7 @@ function mapToGraph(
       },
     });
     // Parent: find the containing section, or fall back to module/file
-    const containerId = findContainingSection(para.line, extracted.sections, sectionNodeIds) ?? parentId;
+    const containerId = findContainingSection(para.line, extracted.sections, sectionNodeIds, extracted.programs) ?? parentId;
     graph.addRelationship({
       id: generateId('CONTAINS', `${containerId}->${paraId}`),
       type: 'CONTAINS',
@@ -423,7 +423,7 @@ function mapToGraph(
       confidence: 1.0,
       reason: 'cobol-paragraph',
     });
-    paraNodeIds.set(para.name.toUpperCase(), paraId);
+    paraNodeIds.set(`${owningPgmPara ?? ''}:${para.name.toUpperCase()}`, paraId);
   }
 
   // ── Data items -> Property nodes ─────────────────────────────────
@@ -452,16 +452,25 @@ function mapToGraph(
     });
   }
 
+  // Helper: look up paragraph/section by name scoped to the owning program
+  const scopedParaLookup = (name: string, lineNum: number): string | undefined => {
+    const pgm = findOwningProgramName(lineNum, extracted.programs);
+    return paraNodeIds.get(`${pgm ?? ''}:${name.toUpperCase()}`)
+      ?? sectionNodeIds.get(`${pgm ?? ''}:${name.toUpperCase()}`);
+  };
+  const scopedCallerLookup = (name: string | null, lineNum: number): string => {
+    if (!name) return parentId;
+    const pgm = findOwningProgramName(lineNum, extracted.programs);
+    return paraNodeIds.get(`${pgm ?? ''}:${name.toUpperCase()}`) ?? parentId;
+  };
+
   // ── PERFORM -> CALLS relationship (intra-file) ──────────────────
   for (const perf of extracted.performs) {
-    const targetId = paraNodeIds.get(perf.target.toUpperCase())
-      ?? sectionNodeIds.get(perf.target.toUpperCase());
+    const targetId = scopedParaLookup(perf.target, perf.line);
     if (!targetId) continue;
 
     // Source: the paragraph containing the PERFORM, or the module
-    const sourceId = perf.caller
-      ? (paraNodeIds.get(perf.caller.toUpperCase()) ?? parentId)
-      : parentId;
+    const sourceId = scopedCallerLookup(perf.caller, perf.line);
 
     graph.addRelationship({
       id: generateId('CALLS', `${sourceId}->perform->${targetId}:L${perf.line}`),
@@ -474,8 +483,7 @@ function mapToGraph(
 
     // PERFORM THRU -> expanded CALLS edge to thru target
     if (perf.thruTarget) {
-      const thruTargetId = paraNodeIds.get(perf.thruTarget.toUpperCase())
-        ?? sectionNodeIds.get(perf.thruTarget.toUpperCase());
+      const thruTargetId = scopedParaLookup(perf.thruTarget, perf.line);
       if (thruTargetId && thruTargetId !== targetId) {
         graph.addRelationship({
           id: generateId('CALLS', `${sourceId}->perform-thru->${thruTargetId}:L${perf.line}`),
@@ -729,8 +737,7 @@ function mapToGraph(
 
     // CICS HANDLE ABEND LABEL -> CALLS edge to error handler paragraph
     if (cics.labelName) {
-      const labelTargetId = paraNodeIds.get(cics.labelName.toUpperCase())
-        ?? sectionNodeIds.get(cics.labelName.toUpperCase());
+      const labelTargetId = scopedParaLookup(cics.labelName, cics.line);
       if (labelTargetId) {
         graph.addRelationship({
           id: generateId('CALLS', `${parentId}->abend-label->${cics.labelName}:L${cics.line}`),
@@ -772,9 +779,7 @@ function mapToGraph(
   // ── MOVE data flow -> ACCESSES edges (read/write) ──────────────
   for (const move of extracted.moves) {
     const fromPropId = dataItemMap.get(move.from.toUpperCase());
-    const callerId = move.caller
-      ? (paraNodeIds.get(move.caller.toUpperCase()) ?? parentId)
-      : parentId;
+    const callerId = scopedCallerLookup(move.caller, move.line);
 
     // One read edge per MOVE (regardless of number of targets)
     if (fromPropId) {
@@ -831,11 +836,8 @@ function mapToGraph(
 
   // ── GO TO -> CALLS edges ──────────────────────────────────────
   for (const gt of extracted.gotos) {
-    const callerId = gt.caller
-      ? (paraNodeIds.get(gt.caller.toUpperCase()) ?? parentId)
-      : parentId;
-    const targetId = paraNodeIds.get(gt.target.toUpperCase())
-      ?? sectionNodeIds.get(gt.target.toUpperCase());
+    const callerId = scopedCallerLookup(gt.caller, gt.line);
+    const targetId = scopedParaLookup(gt.target, gt.line);
     if (targetId) {
       graph.addRelationship({
         id: generateId('CALLS', `${callerId}->goto->${gt.target}:L${gt.line}`),
@@ -929,12 +931,14 @@ function findContainingSection(
   line: number,
   sections: Array<{ name: string; line: number }>,
   sectionNodeIds: Map<string, string>,
+  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number }>,
 ): string | undefined {
+  const pgm = findOwningProgramName(line, programs);
   // Sections are in order; find the last section whose start line <= the target line
   let best: string | undefined;
   for (const sec of sections) {
     if (sec.line <= line) {
-      best = sectionNodeIds.get(sec.name.toUpperCase());
+      best = sectionNodeIds.get(`${pgm ?? ''}:${sec.name.toUpperCase()}`);
     } else {
       break;
     }

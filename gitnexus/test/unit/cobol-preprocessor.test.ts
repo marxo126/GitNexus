@@ -673,6 +673,88 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.paragraphs.map(p => p.name)).toContain('CROSS-SECTION-ANALYSIS');
     });
 
+    it('PERFORM THROUGH (full spelling) captures thruTarget', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           PERFORM FIRST-PARA THROUGH LAST-PARA.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.performs).toHaveLength(1);
+      expect(r.performs[0].target).toBe('FIRST-PARA');
+      expect(r.performs[0].thruTarget).toBe('LAST-PARA');
+    });
+
+    it('PROCEDURE DIVISION USING RETURNING filters RETURNING as keyword', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION USING WS-INPUT RETURNING WS-RESULT.',
+        '       MAIN-PARA.',
+        '           STOP RUN.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      // RETURNING should be filtered out — only actual parameter names remain
+      expect(r.procedureUsing).toEqual(['WS-INPUT', 'WS-RESULT']);
+    });
+
+    it('RE_CALL_DYNAMIC does NOT false-match on WS-CALL compound identifier', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       05  WS-CALL OCCURS 10 PIC X(10).',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           DISPLAY WS-CALL.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      // WS-CALL should NOT produce a dynamic CALL — it's a data item name
+      expect(r.calls.filter(c => !c.isQuoted)).toHaveLength(0);
+    });
+
+    it('multi-line SORT captures USING and GIVING from continuation lines', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           SORT SORT-FILE',
+        '               ON ASCENDING KEY WS-KEY',
+        '               USING INPUT-FILE',
+        '               GIVING OUTPUT-FILE.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.sorts).toHaveLength(1);
+      expect(r.sorts[0].sortFile).toBe('SORT-FILE');
+      expect(r.sorts[0].usingFiles).toContain('INPUT-FILE');
+      expect(r.sorts[0].givingFiles).toContain('OUTPUT-FILE');
+    });
+
+    it('PROCEDURE DIVISION USING on split line is captured via pendingProcUsing', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION',
+        '           USING WS-PARAM1 WS-PARAM2.',
+        '       MAIN-PARA.',
+        '           STOP RUN.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.procedureUsing).toEqual(['WS-PARAM1', 'WS-PARAM2']);
+    });
+
+    it('copybook preprocessing strips sequence numbers before expansion', () => {
+      // This is tested indirectly — preprocessCobolSource is called in readCopy
+      const input = cobol('000100 IDENTIFICATION DIVISION.', '000200 PROGRAM-ID. TEST1.');
+      const output = preprocessCobolSource(input);
+      // Verify cols 1-6 are blanked for numeric sequences
+      expect(output.split('\n')[0]).toBe('       IDENTIFICATION DIVISION.');
+    });
+
     it('numeric sequence numbers are stripped so paragraphs are detected', () => {
       const src = preprocessCobolSource(cobol(
         '000100 IDENTIFICATION DIVISION.',
