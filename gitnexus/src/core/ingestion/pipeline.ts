@@ -16,6 +16,7 @@ import {
   processRoutesFromExtracted,
   processNextjsFetchRoutes,
   extractFetchCallsFromFiles,
+  processSwiftUINavigation,
   seedCrossFileReceiverTypes,
   buildImportedReturnTypes,
   buildImportedRawReturnTypes,
@@ -24,6 +25,7 @@ import {
   buildImplementorMap,
   mergeImplementorMaps,
 } from './call-processor.js';
+import { extractSwiftUINavigations, type ExtractedNavigation } from './swiftui-navigation.js';
 import { nextjsFileToRouteURL, normalizeFetchURL } from './route-extractors/nextjs.js';
 import { expoFileToRouteURL } from './route-extractors/expo.js';
 import { phpFileToRouteURL } from './route-extractors/php.js';
@@ -648,6 +650,7 @@ async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allNavigations: ExtractedNavigation[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -787,6 +790,7 @@ async function runChunkedParseAndResolve(
   // Accumulate MCP/RPC tool definitions (@mcp.tool(), @app.tool(), etc.)
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allNavigations: ExtractedNavigation[] = [];
   const deferredWorkerCalls: ExtractedCall[] = [];
   const deferredWorkerHeritage: ExtractedHeritage[] = [];
   const deferredConstructorBindings: FileConstructorBindings[] = [];
@@ -924,6 +928,9 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.decoratorRoutes?.length) {
           allDecoratorRoutes.push(...chunkWorkerData.decoratorRoutes);
         }
+        if (chunkWorkerData.navigations?.length) {
+          allNavigations.push(...chunkWorkerData.navigations);
+        }
         if (chunkWorkerData.toolDefs?.length) {
           allToolDefs.push(...chunkWorkerData.toolDefs);
         }
@@ -1023,6 +1030,10 @@ async function runChunkedParseAndResolve(
     for (const f of chunkFiles) {
       extractORMQueriesInline(f.path, f.content, allORMQueries);
     }
+    // Extract SwiftUI navigation patterns (sequential path)
+    for (const file of chunkFiles) {
+      extractSwiftUINavigations(file.path, file.content, allNavigations);
+    }
     astCache.clear();
   }
 
@@ -1096,6 +1107,7 @@ async function runChunkedParseAndResolve(
     allDecoratorRoutes,
     allToolDefs,
     allORMQueries,
+    allNavigations,
   };
 }
 
@@ -1343,6 +1355,7 @@ export const runPipelineFromRepo = async (
       allDecoratorRoutes,
       allToolDefs,
       allORMQueries,
+      allNavigations,
     } = await runChunkedParseAndResolve(
       graph,
       ctx,
@@ -1662,6 +1675,13 @@ export const runPipelineFromRepo = async (
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
+    }
+    // ── Phase 3.8: SwiftUI Navigation Graph ──────────────────────────
+    if (allNavigations.length > 0) {
+      const navEdges = processSwiftUINavigation(graph, allNavigations);
+      if (isDev) {
+        console.log(`🧭 SwiftUI navigation: ${navEdges} NAVIGATES_TO edges from ${allNavigations.length} patterns`);
+      }
     }
 
     // ── Phase 14: Cross-file binding propagation (topological level sort) ──

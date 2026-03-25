@@ -14,6 +14,7 @@ import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
+import { extractSwiftUINavigations, type ExtractedNavigation, type SwiftUINavigationType } from '../swiftui-navigation.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from '../constants.js';
 import { SymbolTable } from '../symbol-table.js';
 
@@ -246,6 +247,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  navigations: ExtractedNavigation[];
   constructorBindings: FileConstructorBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
   typeEnvBindings: FileTypeEnvBindings[];
@@ -530,6 +532,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    navigations: [],
     constructorBindings: [],
     typeEnvBindings: [],
     skippedLanguages: {},
@@ -1895,6 +1898,8 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, file.content, result.ormQueries);
+    // ── SwiftUI Navigation Detection ──
+    extractSwiftUINavigations(file.path, file.content, result.navigations);
   }
 };
 
@@ -1916,6 +1921,7 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  navigations: [],
   constructorBindings: [],
   typeEnvBindings: [],
   skippedLanguages: {},
@@ -1936,6 +1942,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.decoratorRoutes.push(...src.decoratorRoutes);
   target.toolDefs.push(...src.toolDefs);
   target.ormQueries.push(...src.ormQueries);
+  target.navigations.push(...src.navigations);
   target.constructorBindings.push(...src.constructorBindings);
   target.typeEnvBindings.push(...src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
@@ -1987,6 +1994,7 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        navigations: [],
         constructorBindings: [],
         typeEnvBindings: [],
         skippedLanguages: {},

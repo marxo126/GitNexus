@@ -37,6 +37,7 @@ import type {
   ExtractedORMQuery,
 } from './workers/parse-worker.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
+import type { ExtractedNavigation } from './swiftui-navigation.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -50,6 +51,7 @@ export interface WorkerExtractedData {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  navigations: ExtractedNavigation[];
   constructorBindings: FileConstructorBindings[];
   typeEnvBindings: FileTypeEnvBindings[];
 }
@@ -84,6 +86,7 @@ const processParsingWithWorkers = async (
       decoratorRoutes: [],
       toolDefs: [],
       ormQueries: [],
+      navigations: [],
       constructorBindings: [],
       typeEnvBindings: [],
     };
@@ -108,6 +111,7 @@ const processParsingWithWorkers = async (
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allNavigations: ExtractedNavigation[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const allTypeEnvBindings: FileTypeEnvBindings[] = [];
   for (const result of chunkResults) {
@@ -143,6 +147,7 @@ const processParsingWithWorkers = async (
     allDecoratorRoutes.push(...result.decoratorRoutes);
     allToolDefs.push(...result.toolDefs);
     if (result.ormQueries) allORMQueries.push(...result.ormQueries);
+    if (result.navigations) allNavigations.push(...result.navigations);
     allConstructorBindings.push(...result.constructorBindings);
     allTypeEnvBindings.push(...result.typeEnvBindings);
   }
@@ -173,6 +178,7 @@ const processParsingWithWorkers = async (
     decoratorRoutes: allDecoratorRoutes,
     toolDefs: allToolDefs,
     ormQueries: allORMQueries,
+    navigations: allNavigations,
     constructorBindings: allConstructorBindings,
     typeEnvBindings: allTypeEnvBindings,
   };
