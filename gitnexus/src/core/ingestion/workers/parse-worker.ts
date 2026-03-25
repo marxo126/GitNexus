@@ -217,6 +217,15 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+export interface ExtractedQueuePattern {
+  filePath: string;
+  role: 'producer' | 'consumer' | 'workflow' | 'activity';
+  queueName: string;
+  method?: string;
+  handlerName?: string;
+  lineNumber: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -266,6 +275,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  queuePatterns: ExtractedQueuePattern[];
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
@@ -688,6 +698,28 @@ const cachedExportCheck = (
 
 // DEFINITION_CAPTURE_KEYS and getDefinitionNodeFromCaptures imported from ../utils.js
 
+
+// BullMQ + Temporal Queue Pattern Extraction
+const BULLMQ_ADD_RE = /(\w+)\.(add|addBulk)\s*\(/g;
+const BULLMQ_WORKER_RE = /new\s+Worker\s*\(\s*['\"](\w[\w-]*)['\"]/g;
+const TEMPORAL_ACTIVITY_RE = /activities\.(\w+)\s*\(/g;
+const TEMPORAL_WORKFLOW_START_RE = /client\.workflow\.(start|execute)\s*\(\s*(\w+)/g;
+export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
+  const hasBullMQ = content.includes('new Queue') || content.includes('new Worker');
+  const hasTemporal = content.includes('activities.') || content.includes('client.workflow.');
+  if (!hasBullMQ && !hasTemporal) return;
+  if (hasBullMQ) {
+    const queueVarMap = new Map<string, string>(); const assignRe = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['\"](\w[\w-]*)['\"]/g; assignRe.lastIndex = 0; let m;
+    while ((m = assignRe.exec(content)) !== null) { queueVarMap.set(m[1], m[2]); }
+    BULLMQ_ADD_RE.lastIndex = 0; while ((m = BULLMQ_ADD_RE.exec(content)) !== null) { const qn = queueVarMap.get(m[1]); if (qn) { out.push({ filePath, role: 'producer', queueName: qn, method: m[2], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); } }
+    BULLMQ_WORKER_RE.lastIndex = 0; while ((m = BULLMQ_WORKER_RE.exec(content)) !== null) { out.push({ filePath, role: 'consumer', queueName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+  }
+  if (hasTemporal) { let m;
+    TEMPORAL_ACTIVITY_RE.lastIndex = 0; while ((m = TEMPORAL_ACTIVITY_RE.exec(content)) !== null) { out.push({ filePath, role: 'activity', queueName: m[1], handlerName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+    TEMPORAL_WORKFLOW_START_RE.lastIndex = 0; while ((m = TEMPORAL_WORKFLOW_START_RE.exec(content)) !== null) { out.push({ filePath, role: 'workflow', queueName: m[2], method: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
+  }
+}
+
 // ============================================================================
 // Process a batch of files
 // ============================================================================
@@ -709,6 +741,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    queuePatterns: [],
     constructorBindings: [],
     fileScopeBindings: [],
     skippedLanguages: {},
@@ -2246,6 +2279,7 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, parseContent, result.ormQueries);
+    extractQueuePatterns(file.path, file.content, result.queuePatterns);
 
     // Vue: emit CALLS edges for components used in <template>
     if (language === SupportedLanguages.Vue) {
@@ -2280,6 +2314,7 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  queuePatterns: [],
   constructorBindings: [],
   fileScopeBindings: [],
   skippedLanguages: {},
@@ -2307,6 +2342,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.decoratorRoutes, src.decoratorRoutes);
   appendAll(target.toolDefs, src.toolDefs);
   appendAll(target.ormQueries, src.ormQueries);
+  appendAll(target.queuePatterns, src.queuePatterns);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
@@ -2358,6 +2394,7 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        queuePatterns: [],
         constructorBindings: [],
         fileScopeBindings: [],
         skippedLanguages: {},

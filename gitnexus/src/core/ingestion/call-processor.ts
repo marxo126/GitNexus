@@ -70,6 +70,7 @@ import type {
   ExtractedAssignment,
   ExtractedRoute,
   ExtractedFetchCall,
+  ExtractedQueuePattern,
   FileConstructorBindings,
 } from './workers/parse-worker.js';
 import { normalizeFetchURL, routeMatches } from './route-extractors/nextjs.js';
@@ -3299,4 +3300,21 @@ export const extractFetchCallsFromFiles = async (
   }
 
   return result;
+};
+
+export const processQueuePatterns = (graph: KnowledgeGraph, patterns: ExtractedQueuePattern[]): { queuesCreated: number; edgesCreated: number } => {
+  if (patterns.length === 0) return { queuesCreated: 0, edgesCreated: 0 };
+  const byQueue = new Map<string, ExtractedQueuePattern[]>();
+  for (const p of patterns) { const e = byQueue.get(p.queueName); if (e) e.push(p); else byQueue.set(p.queueName, [p]); }
+  let queuesCreated = 0, edgesCreated = 0;
+  for (const [qn, qp] of byQueue) {
+    const qid = generateId('CodeElement', 'queue:' + qn);
+    if (!graph.getNode(qid)) { graph.addNode({ id: qid, label: 'CodeElement', properties: { name: qn, filePath: qp[0].filePath, description: 'Queue: ' + qn } }); queuesCreated++; }
+    for (const pt of qp) {
+      const fid = generateId('File', pt.filePath), rt = (pt.role === 'producer' || pt.role === 'workflow') ? 'ENQUEUES' : 'PROCESSES';
+      graph.addRelationship({ id: generateId(rt, fid+'->'+qid+':'+pt.lineNumber), sourceId: fid, targetId: qid, type: rt, confidence: 0.9, reason: pt.role+'-'+(pt.method ?? 'handler') });
+      edgesCreated++;
+    }
+  }
+  return { queuesCreated, edgesCreated };
 };
