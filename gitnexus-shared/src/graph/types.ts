@@ -115,7 +115,9 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'ENQUEUES'
+  | 'PROCESSES';
 
 export interface GraphNode {
   id: string;
