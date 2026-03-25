@@ -76,7 +76,28 @@ export function extractResponseShapes(content: string): { responseKeys?: string[
         if (ch === inString) inString = null;
         continue;
       }
-      if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        // At depth 1, a quoted string before ':' is a property key — extract it
+        if (depth === 1 && keyStart === -1) {
+          const quote = ch;
+          const strStart = j + 1;
+          let strEnd = -1;
+          for (let s = strStart; s < content.length; s++) {
+            if (content[s] === '\\') { s++; continue; }
+            if (content[s] === quote) { strEnd = s; break; }
+          }
+          if (strEnd !== -1) {
+            const rest = content.slice(strEnd + 1).trimStart();
+            if (rest[0] === ':') {
+              callKeys.push(content.slice(strStart, strEnd));
+            }
+            j = strEnd;
+            continue;
+          }
+        }
+        inString = ch;
+        continue;
+      }
       if (ch === '{') { depth++; continue; }
       if (ch === '}') { depth--; if (depth === 0) { closingBracePos = j; break; } continue; }
       if (depth !== 1) continue;

@@ -1653,15 +1653,16 @@ export class LocalBackend {
              r.reason AS fetchReason
     `, params);
 
+    // Strip wrapping quotes from DB array elements — CSV COPY stores ['key'] which
+    // LadybugDB may return as "'key'" rather than "key"
+    const stripQuotes = (keys: string[] | null): string[] | null =>
+      keys ? keys.map(k => k.replace(/^['"]|['"]$/g, '')) : null;
+
     const routeMap = new Map<string, { id: string; name: string; filePath: string; responseKeys: string[] | null; errorKeys: string[] | null; middleware: string[] | null; consumers: Array<{ name: string; filePath: string; accessedKeys?: string[]; fetchCount?: number }> }>();
     for (const row of rows) {
       const id = row.routeId ?? row[0];
       const name = row.routeName ?? row[1];
       const filePath = row.handlerFile ?? row[2];
-      // Strip wrapping quotes from DB array elements — CSV COPY stores ['key'] which
-      // LadybugDB may return as "'key'" rather than "key"
-      const stripQuotes = (keys: string[] | null): string[] | null =>
-        keys ? keys.map(k => k.replace(/^['"]|['"]$/g, '')) : null;
       const responseKeys = stripQuotes(row.responseKeys ?? row[3] ?? null);
       const errorKeys = stripQuotes(row.errorKeys ?? row[4] ?? null);
       const middleware = stripQuotes(row.middleware ?? row[5] ?? null);
@@ -1759,10 +1760,9 @@ export class LocalBackend {
     const results = allRoutes
       .filter(r => ((r.responseKeys && r.responseKeys.length > 0) || (r.errorKeys && r.errorKeys.length > 0)) && r.consumers.length > 0)
       .map(r => {
-        // Normalize keys — DB may return quoted strings from CSV array literals
-        const strip = (k: string) => k.replace(/^['"]|['"]$/g, '');
-        const responseKeys = (r.responseKeys ?? []).map(strip);
-        const errorKeys = (r.errorKeys ?? []).map(strip);
+        // Keys already normalized by fetchRoutesWithConsumers (quotes stripped)
+        const responseKeys = r.responseKeys ?? [];
+        const errorKeys = r.errorKeys ?? [];
         // Combined set: consumer accessing either success or error keys is valid
         const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
@@ -1884,9 +1884,9 @@ export class LocalBackend {
     }
 
     const results = routes.map(r => {
-      const strip = (k: string) => k.replace(/^['"]|['"]$/g, '');
-      const responseKeys = (r.responseKeys ?? []).map(strip);
-      const errorKeys = (r.errorKeys ?? []).map(strip);
+      // Keys already normalized by fetchRoutesWithConsumers (quotes stripped)
+      const responseKeys = r.responseKeys ?? [];
+      const errorKeys = r.errorKeys ?? [];
       const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
       // Build consumer list with mismatch detection

@@ -10,16 +10,22 @@ describe('extractResponseShapes', () => {
     expect(result.responseKeys).toContain('pagination');
   });
 
-  it('extracts keys from .json() with quoted property names', () => {
+  it('extracts single-quoted property keys from .json() call', () => {
     const content = `return NextResponse.json({ 'courses': coursesData, 'articles': articlesData });`;
     const result = extractResponseShapes(content);
-    // Keys should not contain quotes regardless of source format
-    expect(result.responseKeys).toBeDefined();
-    if (result.responseKeys) {
-      for (const key of result.responseKeys) {
-        expect(key).not.toMatch(/['"]/);
-      }
+    expect(result.responseKeys).toContain('courses');
+    expect(result.responseKeys).toContain('articles');
+    // Must not contain quotes
+    for (const key of result.responseKeys!) {
+      expect(key).not.toMatch(/['"]/);
     }
+  });
+
+  it('extracts double-quoted property keys from .json() call', () => {
+    const content = `return NextResponse.json({ "items": data, "count": total });`;
+    const result = extractResponseShapes(content);
+    expect(result.responseKeys).toContain('items');
+    expect(result.responseKeys).toContain('count');
   });
 
   it('classifies error keys by status code', () => {
@@ -52,7 +58,7 @@ describe('extractConsumerAccessedKeys', () => {
 
   it('extracts property access on response variables', () => {
     const content = `
-      const result = await fetch('/api/test').then(r => r.json());
+      const data = await fetch('/api/test').then(r => r.json());
       console.log(data.items);
       console.log(data.total);
     `;
@@ -101,5 +107,20 @@ describe('extractConsumerAccessedKeys', () => {
     expect(keys).toContain('downloadUrl');
     expect(keys).not.toContain('appendChild');
     expect(keys).not.toContain('removeChild');
+  });
+
+  it('does not blocklist legitimate API field names', () => {
+    const content = `
+      const data = await res.json();
+      console.log(data.type);
+      console.log(data.href);
+      console.log(data.target);
+      console.log(data.style);
+    `;
+    const keys = extractConsumerAccessedKeys(content);
+    expect(keys).toContain('type');
+    expect(keys).toContain('href');
+    expect(keys).toContain('target');
+    expect(keys).toContain('style');
   });
 });

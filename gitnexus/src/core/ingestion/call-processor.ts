@@ -1416,11 +1416,10 @@ const RESPONSE_METHOD_BLOCKLIST = new Set([
   'setAttribute', 'getAttribute', 'removeAttribute', 'hasAttribute',
   'addEventListener', 'removeEventListener', 'dispatchEvent',
   'innerHTML', 'outerHTML', 'textContent', 'innerText',
-  'classList', 'className', 'style', 'dataset',
+  'classList', 'className',
   'parentNode', 'parentElement', 'childNodes', 'children',
   'nextSibling', 'previousSibling', 'firstChild', 'lastChild',
   'click', 'focus', 'blur', 'submit', 'reset',
-  'href', 'download', 'target', 'rel', 'type',
 ]);
 
 export const extractConsumerAccessedKeys = (content: string): string[] => {
