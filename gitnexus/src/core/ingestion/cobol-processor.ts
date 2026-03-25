@@ -367,7 +367,8 @@ function mapToGraph(
     const nextLine = i + 1 < extracted.sections.length
       ? extracted.sections[i + 1].line - 1
       : lines.length;
-    const secId = generateId('Namespace', `${filePath}:${sec.name}`);
+    const owningPgm = findOwningProgramName(sec.line, extracted.programs);
+    const secId = generateId('Namespace', `${filePath}:${owningPgm ? owningPgm + ':' : ''}${sec.name}`);
     graph.addNode({
       id: secId,
       label: 'Namespace',
@@ -398,7 +399,8 @@ function mapToGraph(
     const nextLine = i + 1 < extracted.paragraphs.length
       ? extracted.paragraphs[i + 1].line - 1
       : lines.length;
-    const paraId = generateId('Function', `${filePath}:${para.name}`);
+    const owningPgmPara = findOwningProgramName(para.line, extracted.programs);
+    const paraId = generateId('Function', `${filePath}:${owningPgmPara ? owningPgmPara + ':' : ''}${para.name}`);
     graph.addNode({
       id: paraId,
       label: 'Function',
@@ -907,6 +909,20 @@ function mapToGraph(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Find the enclosing program name for a given line number (innermost wins). */
+function findOwningProgramName(
+  lineNum: number,
+  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number }>,
+): string | undefined {
+  let best: typeof programs[0] | undefined;
+  for (const p of programs) {
+    if (p.startLine <= lineNum && p.endLine >= lineNum) {
+      if (!best || p.nestingDepth > best.nestingDepth) best = p;
+    }
+  }
+  return best?.name;
+}
 
 /** Find the section that contains a given line number. */
 function findContainingSection(

@@ -214,7 +214,7 @@ const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+THRU\s+([A-Z][A-Z0-9-]+))
 // Use separate alternation groups so quotes must match (prevents "PROG' false-matches).
 const RE_CALL = /\bCALL\s+(?:"([^"]+)"|'([^']+)')/i;
 // Dynamic CALL via data item (no quotes): CALL WS-PROGRAM-NAME
-const RE_CALL_DYNAMIC = /\bCALL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
+const RE_CALL_DYNAMIC = /(?<![A-Z0-9-])\bCALL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
 const RE_COPY_UNQUOTED = /\bCOPY\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
 const RE_COPY_QUOTED = /\bCOPY\s+(?:"([^"]+)"|'([^']+)')(?:\s|\.)/i;
 
@@ -735,6 +735,30 @@ export function extractCobolSymbolsWithRegex(
   // Flush any pending SELECT
   flushSelect();
 
+  // Flush any pending SORT/MERGE accumulator (truncated file without trailing period)
+  if (sortAccum !== null) {
+    const smatch = sortAccum.match(RE_SORT) || sortAccum.match(RE_MERGE);
+    if (smatch) {
+      const upper = sortAccum.toUpperCase();
+      const usingIdx = upper.search(/\bUSING\s/);
+      const givingIdx = upper.search(/\bGIVING\s/);
+      const usingFiles: string[] = [];
+      const givingFiles: string[] = [];
+      if (usingIdx >= 0) {
+        const afterUsing = sortAccum.substring(usingIdx + 6);
+        const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
+        const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
+        usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+      }
+      if (givingIdx >= 0) {
+        const givingText = sortAccum.substring(givingIdx + 7);
+        givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+      }
+      result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
+    }
+    sortAccum = null;
+  }
+
   // If we saw an FD but never found its record, emit it without a record name
   if (pendingFdName !== null) {
     result.fdEntries.push({ fdName: pendingFdName, line: pendingFdLine });
@@ -829,6 +853,7 @@ export function extractCobolSymbolsWithRegex(
           if (procUsingMatch) {
             result.procedureUsing = procUsingMatch[1].trim().split(/\s+/)
               .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
+            pendingProcUsing = false;
           } else {
             // USING may be on the next line — flag for extractProcedure to pick up
             pendingProcUsing = true;
