@@ -587,6 +587,9 @@ const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'Webhook') {
+    return `COPY ${t}(id, name, filePath, kind, eventTypes) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   if (table === 'Method') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }

@@ -217,6 +217,23 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+export interface ExtractedWebhook {
+  filePath: string;
+  name: string;
+  kind: 'stripe' | 'bullmq-consumer' | 'bullmq-producer' | 'edge-function' | 'realtime' | 'generic';
+  eventTypes: string[];
+  lineNumber: number;
+}
+
+export interface ExtractedQueuePattern {
+  filePath: string;
+  role: 'producer' | 'consumer';
+  queueName: string;
+  method?: string;
+  handlerName?: string;
+  lineNumber: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -266,6 +283,8 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  webhooks: ExtractedWebhook[];
+  queuePatterns: ExtractedQueuePattern[];
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
@@ -709,6 +728,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    webhooks: [],
     constructorBindings: [],
     fileScopeBindings: [],
     skippedLanguages: {},
@@ -1328,6 +1348,48 @@ export function extractORMQueries(
         method: m[2],
         lineNumber: content.substring(0, m.index).split('\n').length - 1,
       });
+    }
+  }
+}
+
+// ============================================================================
+// Webhook/Event Handler Extraction
+// ============================================================================
+
+function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
+  if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
+    const eventTypes: string[] = [];
+    const caseRe = /case\s+['"]([.\w-]+)['"]/g;
+    let m;
+    while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
+    const idx = content.indexOf('constructEvent');
+    out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
+      lineNumber: idx > -1 ? content.substring(0, idx).split('\n').length - 1 : 0 });
+    return;
+  }
+  const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
+  if (edgeFnMatch && content.includes('Deno.serve')) {
+    const idx = content.indexOf('Deno.serve');
+    out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
+      lineNumber: content.substring(0, idx).split('\n').length - 1 });
+    return;
+  }
+  if (content.includes('postgres_changes')) {
+    const channelRe = /\.channel\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+    let m;
+    while ((m = channelRe.exec(content)) !== null) {
+      out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
+        lineNumber: content.substring(0, m.index).split('\n').length - 1 });
+    }
+  }
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.includes('webhook') || lowerPath.includes('hook')) {
+    const hasSigVerify = content.includes('x-webhook-signature') || content.includes('x-hub-signature')
+      || content.includes('verify');
+    if (hasSigVerify) {
+      const pathParts = filePath.split('/');
+      const name = pathParts[pathParts.length - 1].replace(/\.(ts|js|tsx|jsx)$/, '');
+      out.push({ filePath, name: `webhook:${name}`, kind: 'generic', eventTypes: [], lineNumber: 0 });
     }
   }
 }
@@ -2246,6 +2308,8 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, parseContent, result.ormQueries);
+    extractWebhooks(file.path, file.content, result.webhooks);
+    extractQueuePatterns(file.path, file.content, result.queuePatterns);
 
     // Vue: emit CALLS edges for components used in <template>
     if (language === SupportedLanguages.Vue) {
@@ -2280,6 +2344,8 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  webhooks: [],
+  queuePatterns: [],
   constructorBindings: [],
   fileScopeBindings: [],
   skippedLanguages: {},
@@ -2307,8 +2373,11 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.decoratorRoutes, src.decoratorRoutes);
   appendAll(target.toolDefs, src.toolDefs);
   appendAll(target.ormQueries, src.ormQueries);
+  appendAll(target.webhooks, src.webhooks);
+  appendAll(target.queuePatterns, src.queuePatterns);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
+  appendAll(target.typeEnvBindings, src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
     target.skippedLanguages[lang] = (target.skippedLanguages[lang] || 0) + count;
   }
@@ -2358,6 +2427,8 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        webhooks: [],
+        queuePatterns: [],
         constructorBindings: [],
         fileScopeBindings: [],
         skippedLanguages: {},

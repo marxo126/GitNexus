@@ -277,6 +277,10 @@ export const streamAllCSVsToDisk = async (
     path.join(csvDir, 'tool.csv'),
     'id,name,filePath,description',
   );
+  const webhookWriter = new BufferedCSVWriter(
+    path.join(csvDir, 'webhook.csv'),
+    'id,name,filePath,kind,eventTypes',
+  );
 
   // Multi-language node types share the same CSV shape (no isExported column)
   const multiLangHeader = 'id,name,filePath,startLine,endLine,content,description';
@@ -447,6 +451,20 @@ export const streamAllCSVsToDisk = async (
           ].join(','),
         );
         break;
+      case 'Webhook': {
+        const eventTypes = node.properties.eventTypes as string[] || [];
+        const eventTypesStr = `[${eventTypes.map((e: string) => `'${e.replace(/'/g, "''")}'`).join(',')}]`;
+        await webhookWriter.addRow(
+          [
+            escapeCSVField(node.id),
+            escapeCSVField(node.properties.name || ''),
+            escapeCSVField(node.properties.filePath || ''),
+            escapeCSVField(node.properties.kind as string || ''),
+            escapeCSVField(eventTypesStr),
+          ].join(','),
+        );
+        break;
+      }
       default: {
         // Code element nodes (Function, Class, Interface, CodeElement)
         const writer = codeWriterMap[node.label];
@@ -501,6 +519,7 @@ export const streamAllCSVsToDisk = async (
     sectionWriter,
     routeWriter,
     toolWriter,
+    webhookWriter,
     ...multiLangWriters.values(),
   ];
   await Promise.all(allWriters.map((w) => w.finish()));
@@ -537,6 +556,7 @@ export const streamAllCSVsToDisk = async (
     ['Section' as NodeTableName, sectionWriter],
     ['Route' as NodeTableName, routeWriter],
     ['Tool' as NodeTableName, toolWriter],
+    ['Webhook' as NodeTableName, webhookWriter],
     ...Array.from(multiLangWriters.entries()).map(
       ([name, w]) => [name as NodeTableName, w] as [NodeTableName, BufferedCSVWriter],
     ),

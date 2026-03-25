@@ -196,6 +196,17 @@ CREATE NODE TABLE Tool (
   PRIMARY KEY (id)
 )`;
 
+// Webhook/event handler endpoints
+export const WEBHOOK_SCHEMA = `
+CREATE NODE TABLE Webhook (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  kind STRING,
+  eventTypes STRING[],
+  PRIMARY KEY (id)
+)`;
+
 // Markdown heading sections
 export const SECTION_SCHEMA = `
 CREATE NODE TABLE Section (
@@ -318,6 +329,14 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM File TO Tool,
   FROM Function TO Tool,
   FROM Method TO Tool,
+  FROM File TO Webhook,
+  FROM Webhook TO Webhook,
+  FROM Webhook TO Function,
+  FROM Webhook TO Method,
+  FROM File TO Webhook,
+  FROM Webhook TO Webhook,
+  FROM Webhook TO Function,
+  FROM Webhook TO Method,
   FROM CodeElement TO Community,
   FROM Interface TO Community,
   FROM Interface TO Function,
@@ -420,6 +439,8 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM CodeElement TO Process,
   FROM Route TO Process,
   FROM Tool TO Process,
+  FROM Webhook TO Process,
+  FROM Webhook TO Process,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -510,6 +531,8 @@ export const NODE_SCHEMA_QUERIES = [
   ROUTE_SCHEMA,
   // MCP tools
   TOOL_SCHEMA,
+  // Webhooks/event handlers
+  WEBHOOK_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];

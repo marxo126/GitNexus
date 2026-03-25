@@ -42,6 +42,7 @@ import type {
   ExtractedFetchCall,
   ExtractedDecoratorRoute,
   ExtractedToolDef,
+  ExtractedWebhook,
   FileConstructorBindings,
   FileScopeBindings,
   ExtractedORMQuery,
@@ -60,6 +61,7 @@ export interface WorkerExtractedData {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  webhooks: ExtractedWebhook[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
 }
@@ -94,6 +96,7 @@ const processParsingWithWorkers = async (
       decoratorRoutes: [],
       toolDefs: [],
       ormQueries: [],
+      webhooks: [],
       constructorBindings: [],
       fileScopeBindings: [],
     };
@@ -118,6 +121,7 @@ const processParsingWithWorkers = async (
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allWebhooks: ExtractedWebhook[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
   for (const result of chunkResults) {
@@ -145,18 +149,18 @@ const processParsingWithWorkers = async (
       });
     }
 
-    for (const item of result.imports) allImports.push(item);
-    for (const item of result.calls) allCalls.push(item);
-    for (const item of result.assignments) allAssignments.push(item);
-    for (const item of result.heritage) allHeritage.push(item);
-    for (const item of result.routes) allRoutes.push(item);
-    for (const item of result.fetchCalls) allFetchCalls.push(item);
-    for (const item of result.decoratorRoutes) allDecoratorRoutes.push(item);
-    for (const item of result.toolDefs) allToolDefs.push(item);
-    if (result.ormQueries) for (const item of result.ormQueries) allORMQueries.push(item);
-    for (const item of result.constructorBindings) allConstructorBindings.push(item);
-    if (result.fileScopeBindings)
-      for (const item of result.fileScopeBindings) fileScopeBindingsByFile.push(item);
+    allImports.push(...result.imports);
+    allCalls.push(...result.calls);
+    allAssignments.push(...result.assignments);
+    allHeritage.push(...result.heritage);
+    allRoutes.push(...result.routes);
+    allFetchCalls.push(...result.fetchCalls);
+    allDecoratorRoutes.push(...result.decoratorRoutes);
+    allToolDefs.push(...result.toolDefs);
+    if (result.ormQueries) allORMQueries.push(...result.ormQueries);
+    allWebhooks.push(...result.webhooks);
+    allConstructorBindings.push(...result.constructorBindings);
+    if (result.fileScopeBindings) fileScopeBindingsByFile.push(...result.fileScopeBindings);
   }
 
   // Merge and log skipped languages from workers
@@ -185,6 +189,7 @@ const processParsingWithWorkers = async (
     decoratorRoutes: allDecoratorRoutes,
     toolDefs: allToolDefs,
     ormQueries: allORMQueries,
+    webhooks: allWebhooks,
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
   };

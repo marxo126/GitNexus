@@ -495,6 +495,8 @@ export class LocalBackend {
         return this.shapeCheck(repo, params);
       case 'tool_map':
         return this.toolMap(repo, params);
+      case 'webhook_map':
+        return this.webhookMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
       default:
@@ -3217,6 +3219,30 @@ export class LocalBackend {
         filePath: s.filePath || s[2],
       })),
     };
+  }
+
+  private async webhookMap(repo: RepoHandle, params: { kind?: string; name?: string }): Promise<any> {
+    const kindFilter = params.kind ? `AND n.kind = $kind` : '';
+    const nameFilter = params.name ? `AND n.name CONTAINS $name` : '';
+    const queryParams: Record<string, any> = {};
+    if (params.kind) queryParams.kind = params.kind;
+    if (params.name) queryParams.name = params.name;
+    const rows = await executeParameterized(repo.id, `
+      MATCH (n:Webhook)
+      WHERE n.id STARTS WITH 'Webhook:' ${kindFilter} ${nameFilter}
+      RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.kind AS kind, n.eventTypes AS eventTypes
+    `, queryParams);
+    const triggerRows = await executeParameterized(repo.id, `
+      MATCH (a:Webhook)-[r:CodeRelation {type: 'TRIGGERS'}]->(b:Webhook)
+      RETURN a.name AS source, b.name AS target, r.reason AS reason
+    `, {});
+    const webhooks = rows.map((r: any) => ({
+      id: r.id, name: r.name, filePath: r.filePath, kind: r.kind, eventTypes: r.eventTypes || [],
+    }));
+    const triggers = triggerRows.map((r: any) => ({
+      source: r.source, target: r.target, reason: r.reason,
+    }));
+    return { webhooks, triggers, total: webhooks.length };
   }
 
   async disconnect(): Promise<void> {
