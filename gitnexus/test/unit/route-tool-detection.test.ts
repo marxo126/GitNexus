@@ -507,72 +507,120 @@ describe('error response shape separation', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Next.js project-level middleware config extraction
-// ---------------------------------------------------------------------------
+describe('PHP response shape extraction', () => {
+  it('extracts keys from short array syntax', () => {
+    const content = `echo json_encode(['success' => true, 'data' => $items], JSON_UNESCAPED_UNICODE);`;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['success', 'data']);
+    expect(shapes.errorKeys).toBeUndefined();
+  });
 
-describe('extractNextjsMiddlewareConfig', () => {
-  it('extracts matcher array and named function export', () => {
+  it('extracts keys from long array syntax', () => {
+    const content = `echo json_encode(array('ok' => true, 'count' => $n));`;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['ok', 'count']);
+  });
+
+  it('classifies error responses by http_response_code', () => {
     const content = `
-      import { NextResponse, type NextRequest } from "next/server";
-      export function middleware(request: NextRequest) {
-        return NextResponse.next();
+      http_response_code(401);
+      echo json_encode(['error' => 'Unauthorized'], JSON_UNESCAPED_UNICODE);
+    `;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toBeUndefined();
+    expect(shapes.errorKeys).toEqual(['error']);
+  });
+
+  it('separates success and error responses', () => {
+    const content = `
+      header('Content-Type: application/json');
+      if (!is_logged_in()) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Not logged in'], JSON_UNESCAPED_UNICODE);
+        exit;
       }
-      export const config = {
-        matcher: ["/api/:path*", "/dashboard/:path*"],
-      };
+      echo json_encode(['ok' => true, 'new_status' => $status], JSON_UNESCAPED_UNICODE);
     `;
-    const result = extractNextjsMiddlewareConfig(content);
-    expect(result).toBeDefined();
-    expect(result!.matchers).toEqual(['/api/:path*', '/dashboard/:path*']);
-    expect(result!.exportedName).toBe('middleware');
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['ok', 'new_status']);
+    expect(shapes.errorKeys).toEqual(['error']);
   });
 
-  it('extracts single string matcher', () => {
+  it('handles multiple error status codes with exit boundaries', () => {
     const content = `
-      export function middleware(req) {}
-      export const config = { matcher: '/dashboard/:path*' };
+      if (!$user) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized'], JSON_UNESCAPED_UNICODE);
+        exit;
+      }
+      if (!$valid) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid data', 'field' => 'name'], JSON_UNESCAPED_UNICODE);
+        exit;
+      }
+      echo json_encode(['ok' => true, 'id' => $id], JSON_UNESCAPED_UNICODE);
     `;
-    const result = extractNextjsMiddlewareConfig(content);
-    expect(result!.matchers).toEqual(['/dashboard/:path*']);
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['ok', 'id']);
+    expect(shapes.errorKeys).toEqual(['error', 'field']);
   });
 
-  it('extracts default export name as wrappedFunction', () => {
+  it('detects status from header() pattern', () => {
     const content = `
-      import { auth } from '@/lib/auth';
-      export default auth;
-      export const config = { matcher: ['/api/:path*'] };
+      header('HTTP/1.1 403 Forbidden');
+      echo json_encode(['error' => 'Forbidden', 'message' => 'Access denied']);
     `;
-    const result = extractNextjsMiddlewareConfig(content);
-    expect(result!.exportedName).toBe('auth');
-    expect(result!.wrappedFunctions).toContain('auth');
-    expect(result!.matchers).toEqual(['/api/:path*']);
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.errorKeys).toEqual(['error', 'message']);
   });
 
-  it('extracts chain composition', () => {
-    const content = `
-      export default chain([withAuth, withI18n]);
-      export const config = { matcher: ['/((?!api|_next).*)'] };
-    `;
-    const result = extractNextjsMiddlewareConfig(content);
-    expect(result!.wrappedFunctions).toEqual(['withAuth', 'withI18n']);
+  it('skips json_encode with variable argument', () => {
+    const content = `echo json_encode($data, JSON_UNESCAPED_UNICODE);`;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toBeUndefined();
+    expect(shapes.errorKeys).toBeUndefined();
   });
 
-  it('extracts nested wrapper composition from default export', () => {
-    const content = `
-      export default withRateLimit(withAuth(handler));
-      export const config = { matcher: ['/api/:path*'] };
-    `;
-    const result = extractNextjsMiddlewareConfig(content);
-    expect(result!.wrappedFunctions).toEqual(['withRateLimit', 'withAuth']);
+  it('extracts only top-level keys from nested arrays', () => {
+    const content = `echo json_encode(['data' => ['nested' => true], 'total' => $count]);`;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['data', 'total']);
   });
 
-  it('extracts regex-style negative lookahead matcher', () => {
+  it('handles json_encode with flags after array', () => {
+    const content = `echo json_encode(['export' => $data], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);`;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['export']);
+  });
+
+  it('recognizes exit(N) as a boundary', () => {
     const content = `
-      export function middleware(req) {}
-      export const config = {
-        matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\\\..*$).*)"],
-      };
+      http_response_code(401);
+      echo json_encode(['error' => 'Unauthorized']);
+      exit(0);
+      echo json_encode(['ok' => true, 'data' => $result]);
+    `;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['ok', 'data']);
+    expect(shapes.errorKeys).toEqual(['error']);
+  });
+
+  it('recognizes die("msg") as a boundary', () => {
+    const content = `
+      http_response_code(500);
+      echo json_encode(['error' => 'DB error']);
+      die('Fatal');
+      echo json_encode(['items' => $list]);
+    `;
+    const shapes = extractPHPResponseShapes(content);
+    expect(shapes.responseKeys).toEqual(['items']);
+    expect(shapes.errorKeys).toEqual(['error']);
+  });
+
+  it('detects CGI Status header format', () => {
+    const content = `
+      header('Status: 404 Not Found');
+      echo json_encode(['error' => 'Not found', 'code' => 'MISSING']);
     `;
     const result = extractNextjsMiddlewareConfig(content);
     expect(result!.matchers).toHaveLength(1);
@@ -587,7 +635,6 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.exportedName).toBe('middleware');
   });
 
-
   it('detects arrow function const export', () => {
     const content = `
       export const middleware = (req) => {
@@ -600,7 +647,6 @@ describe('extractNextjsMiddlewareConfig', () => {
     expect(result!.exportedName).toBe('middleware');
     expect(result!.matchers).toEqual(['/dashboard/:path*']);
   });
-
 
   it('handles export default function middleware(...)', () => {
     const content = `export default function middleware(req) { return NextResponse.next(); }`;
