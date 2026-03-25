@@ -894,6 +894,26 @@ function mapToGraph(
 
   // ── CANCEL -> CALLS edges (with two-pass resolution like CALL) ──
   for (const cancel of extracted.cancels) {
+    if (!cancel.isQuoted) {
+      // Dynamic CANCEL via data item — annotate, don't resolve
+      graph.addNode({
+        id: generateId('CodeElement', `${filePath}:dynamic-cancel:${cancel.target}:L${cancel.line}`),
+        label: 'CodeElement',
+        properties: {
+          name: `CANCEL ${cancel.target}`,
+          filePath, startLine: cancel.line, endLine: cancel.line,
+          language: SupportedLanguages.Cobol,
+          description: 'dynamic-cancel (target is a data item, not resolvable statically)',
+        },
+      });
+      graph.addRelationship({
+        id: generateId('CONTAINS', `${parentId}->dynamic-cancel:${cancel.target}:L${cancel.line}`),
+        type: 'CONTAINS', sourceId: parentId,
+        targetId: generateId('CodeElement', `${filePath}:dynamic-cancel:${cancel.target}:L${cancel.line}`),
+        confidence: 1.0, reason: 'cobol-dynamic-cancel',
+      });
+      continue;
+    }
     const targetModuleId = moduleNodeIds.get(cancel.target.toUpperCase());
     const targetId = targetModuleId
       ?? generateId('Module', `<unresolved>:${cancel.target.toUpperCase()}`);
@@ -938,7 +958,8 @@ function findContainingSection(
   let best: string | undefined;
   for (const sec of sections) {
     if (sec.line <= line) {
-      best = sectionNodeIds.get(`${pgm ?? ''}:${sec.name.toUpperCase()}`);
+      const resolved = sectionNodeIds.get(`${pgm ?? ''}:${sec.name.toUpperCase()}`);
+      if (resolved) best = resolved; // only update if lookup succeeds
     } else {
       break;
     }

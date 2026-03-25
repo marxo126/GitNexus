@@ -35,7 +35,7 @@
 export interface CobolRegexResults {
   programName: string | null;
   /** All programs in this file with line-range boundaries for per-program scoping. */
-  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number }>;
+  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number; procedureUsing?: string[] }>;
   paragraphs: Array<{ name: string; line: number }>;
   sections: Array<{ name: string; line: number }>;
   performs: Array<{ caller: string | null; target: string; thruTarget?: string; line: number }>;
@@ -113,7 +113,7 @@ export interface CobolRegexResults {
   gotos: Array<{ caller: string | null; target: string; line: number }>;
   sorts: Array<{ sortFile: string; usingFiles: string[]; givingFiles: string[]; line: number }>;
   searches: Array<{ target: string; line: number }>;
-  cancels: Array<{ target: string; line: number }>;
+  cancels: Array<{ target: string; line: number; isQuoted: boolean }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ const RE_88_LEVEL = /^\s*88\s+([A-Z][A-Z0-9-]+)\s+VALUES?\s+(?:ARE\s+)?(.+)/i;
 
 // PROCEDURE DIVISION
 // These patterns support both fixed-format (7 leading spaces) and free-format (any indentation)
-const RE_PROC_SECTION = /^\s*([A-Z][A-Z0-9-]+)\s+SECTION\.\s*$/i;
+const RE_PROC_SECTION = /^\s*([A-Z][A-Z0-9-]+)\s+SECTION(?:\s+\d+)?\.\s*$/i;
 const RE_PROC_PARAGRAPH = /^\s*([A-Z][A-Z0-9-]+)\.\s*$/i;
 const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/i;
 
@@ -235,6 +235,7 @@ const RE_SEARCH = /\bSEARCH\s+(?:ALL\s+)?([A-Z][A-Z0-9-]+)/i;
 
 // CANCEL — program lifecycle
 const RE_CANCEL = /\bCANCEL\s+(?:"([^"]+)"|'([^']+)')/i;
+const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
 
 // Level 66 RENAMES
 const RE_66_LEVEL = /^\s*66\s+([A-Z][A-Z0-9-]+)\s+RENAMES\s+([A-Z][A-Z0-9-]+)/i;
@@ -629,7 +630,7 @@ export function extractCobolSymbolsWithRegex(
   let currentParagraph: string | null = null;
 
   // Program boundary stack for nested PROGRAM-ID / END PROGRAM tracking
-  const programBoundaryStack: Array<{ name: string; startLine: number }> = [];
+  const programBoundaryStack: Array<{ name: string; startLine: number; procedureUsing?: string[] }> = [];
 
   // SELECT accumulator (multi-line)
   let selectAccum: string | null = null;
@@ -774,6 +775,7 @@ export function extractCobolSymbolsWithRegex(
       startLine: topProgram.startLine,
       endLine: rawLines.length,
       nestingDepth: programBoundaryStack.length,
+      procedureUsing: topProgram.procedureUsing,
     });
   }
   // Sort by startLine so outer programs come first
@@ -830,6 +832,7 @@ export function extractCobolSymbolsWithRegex(
           startLine: topProgram.startLine,
           endLine: lineNum,
           nestingDepth: programBoundaryStack.length,
+          procedureUsing: topProgram.procedureUsing,
         });
       }
       return;
@@ -851,8 +854,12 @@ export function extractCobolSymbolsWithRegex(
           currentParagraph = null;
           const procUsingMatch = line.match(RE_PROC_USING);
           if (procUsingMatch) {
-            result.procedureUsing = procUsingMatch[1].trim().split(/\s+/)
+            const params = procUsingMatch[1].trim().split(/\s+/)
               .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
+            result.procedureUsing = params;
+            // Store per-program on the boundary stack
+            const topProg = programBoundaryStack[programBoundaryStack.length - 1];
+            if (topProg) topProg.procedureUsing = params;
             pendingProcUsing = false;
           } else {
             // USING may be on the next line — flag for extractProcedure to pick up
@@ -1096,8 +1103,11 @@ export function extractCobolSymbolsWithRegex(
     if (pendingProcUsing) {
       const usingMatch = line.match(/\bUSING\s+([\s\S]*?)(?:\.|$)/i);
       if (usingMatch) {
-        result.procedureUsing = usingMatch[1].trim().split(/\s+/)
+        const params = usingMatch[1].trim().split(/\s+/)
           .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
+        result.procedureUsing = params;
+        const topProg = programBoundaryStack[programBoundaryStack.length - 1];
+        if (topProg) topProg.procedureUsing = params;
       }
       pendingProcUsing = false;
       if (usingMatch) return; // consumed the USING line
@@ -1236,10 +1246,15 @@ export function extractCobolSymbolsWithRegex(
       result.searches.push({ target: searchMatch[1], line: lineNum });
     }
 
-    // CANCEL — program lifecycle
+    // CANCEL — program lifecycle (quoted = resolvable, unquoted = dynamic annotation)
     const cancelMatch = line.match(RE_CANCEL);
     if (cancelMatch) {
-      result.cancels.push({ target: cancelMatch[1] ?? cancelMatch[2], line: lineNum });
+      result.cancels.push({ target: cancelMatch[1] ?? cancelMatch[2], line: lineNum, isQuoted: true });
+    } else {
+      const dynCancelMatch = line.match(RE_CANCEL_DYNAMIC);
+      if (dynCancelMatch) {
+        result.cancels.push({ target: dynCancelMatch[1], line: lineNum, isQuoted: false });
+      }
     }
   }
 }

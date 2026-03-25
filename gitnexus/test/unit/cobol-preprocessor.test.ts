@@ -747,6 +747,56 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.procedureUsing).toEqual(['WS-PARAM1', 'WS-PARAM2']);
     });
 
+    it('nested programs carry per-program procedureUsing', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. OUTER.',
+        '      PROCEDURE DIVISION USING WS-OUTER-PARAM.',
+        '       MAIN-PARA.',
+        '           DISPLAY WS-OUTER-PARAM.',
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. INNER.',
+        '      PROCEDURE DIVISION USING WS-INNER-PARAM.',
+        '       INNER-PARA.',
+        '           DISPLAY WS-INNER-PARAM.',
+        '       END PROGRAM INNER.',
+        '       END PROGRAM OUTER.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.programs).toHaveLength(2);
+      const outer = r.programs.find(p => p.name === 'OUTER');
+      const inner = r.programs.find(p => p.name === 'INNER');
+      expect(outer?.procedureUsing).toEqual(['WS-OUTER-PARAM']);
+      expect(inner?.procedureUsing).toEqual(['WS-INNER-PARAM']);
+    });
+
+    it('SECTION with segment number is detected', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-SECTION SECTION 30.',
+        '       MAIN-PARA.',
+        '           DISPLAY "HI".',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.sections.map(s => s.name)).toContain('MAIN-SECTION');
+    });
+
+    it('dynamic CANCEL via data item is captured with isQuoted=false', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           CANCEL WS-PGM-NAME.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.cancels).toHaveLength(1);
+      expect(r.cancels[0].target).toBe('WS-PGM-NAME');
+      expect(r.cancels[0].isQuoted).toBe(false);
+    });
+
     it('copybook preprocessing strips sequence numbers before expansion', () => {
       // This is tested indirectly — preprocessCobolSource is called in readCopy
       const input = cobol('000100 IDENTIFICATION DIVISION.', '000200 PROGRAM-ID. TEST1.');
