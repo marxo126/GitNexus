@@ -164,13 +164,7 @@ const EXCLUDED_PARA_NAMES = new Set([
   'FILE', 'LOCAL-STORAGE', 'COMMUNICATION', 'REPORT',
   'SCREEN', 'INPUT-OUTPUT', 'CONFIGURATION',
   // COBOL verbs that appear alone on a line with period (false-positive in free-format)
-  'GOBACK', 'STOP', 'EXIT', 'CONTINUE', 'END-READ', 'END-WRITE',
-  'END-REWRITE', 'END-DELETE', 'END-START', 'END-RETURN',
-  'END-PERFORM', 'END-IF', 'END-EVALUATE', 'END-SEARCH',
-  'END-COMPUTE', 'END-ADD', 'END-SUBTRACT', 'END-MULTIPLY',
-  'END-DIVIDE', 'END-STRING', 'END-UNSTRING', 'END-ACCEPT',
-  'END-DISPLAY', 'END-CALL', 'END-INVOKE', 'END-XML',
-  'END-JSON', 'END-EXEC',
+  'GOBACK', 'STOP', 'EXIT', 'CONTINUE',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -231,8 +225,6 @@ const RE_GOTO = /\bGO\s+TO\s+([A-Z][A-Z0-9-]+)/i;
 
 // SORT/MERGE file references
 const RE_SORT = /\bSORT\s+([A-Z][A-Z0-9-]+)/i;
-const RE_SORT_USING = /\bUSING\s+([A-Z][A-Z0-9-]+)/i;
-const RE_SORT_GIVING = /\bGIVING\s+([A-Z][A-Z0-9-]+)/i;
 const RE_MERGE = /\bMERGE\s+([A-Z][A-Z0-9-]+)/i;
 
 // SEARCH — table access
@@ -1080,7 +1072,7 @@ export function extractCobolSymbolsWithRegex(
     const paraMatch = line.match(RE_PROC_PARAGRAPH);
     if (paraMatch) {
       const name = paraMatch[1];
-      if (!EXCLUDED_PARA_NAMES.has(name.toUpperCase()) && !name.toUpperCase().includes('DIVISION') && !name.toUpperCase().includes('SECTION')) {
+      if (!EXCLUDED_PARA_NAMES.has(name.toUpperCase()) && !name.toUpperCase().startsWith('END-') && !name.toUpperCase().includes('DIVISION') && !name.toUpperCase().includes('SECTION')) {
         result.paragraphs.push({ name, line: lineNum });
         currentParagraph = name;
       }
@@ -1151,18 +1143,24 @@ export function extractCobolSymbolsWithRegex(
     }
 
     // SORT / MERGE file references (multi-file USING/GIVING)
+    // Uses indexOf+substring instead of nested-quantifier regex to avoid ReDoS
     const sortMatch = line.match(RE_SORT) || line.match(RE_MERGE);
     if (sortMatch) {
-      // Extract all USING files: text between USING and GIVING (or end)
-      const usingSection = line.match(/\bUSING\s+((?:[A-Z][A-Z0-9-]+\s*)+?)(?:\bGIVING\b|$)/i);
-      const usingFiles = usingSection
-        ? usingSection[1].trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f))
-        : [];
-      // Extract all GIVING files
-      const givingSection = line.match(/\bGIVING\s+((?:[A-Z][A-Z0-9-]+\s*)+?)$/i);
-      const givingFiles = givingSection
-        ? givingSection[1].trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f))
-        : [];
+      const upper = line.toUpperCase();
+      const usingIdx = upper.search(/\bUSING\s/);
+      const givingIdx = upper.search(/\bGIVING\s/);
+      const usingFiles: string[] = [];
+      const givingFiles: string[] = [];
+      if (usingIdx >= 0) {
+        const afterUsing = line.substring(usingIdx + 6);
+        const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
+        const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
+        usingFiles.push(...usingText.trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+      }
+      if (givingIdx >= 0) {
+        const givingText = line.substring(givingIdx + 7);
+        givingFiles.push(...givingText.trim().split(/\s+/).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
+      }
       result.sorts.push({
         sortFile: sortMatch[1],
         usingFiles,

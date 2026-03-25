@@ -128,17 +128,19 @@ export const processCobol = (
     copybookMap.set(name, { content: cb.content, path: cb.path });
   }
 
+  // Build reverse lookup: path -> content for O(1) readCopy
+  const copybookByPath = new Map<string, string>();
+  for (const [, entry] of copybookMap) {
+    copybookByPath.set(entry.path, entry.content);
+  }
+
   // Resolve and read callbacks for expandCopies
   const resolveCopy = (name: string): string | null => {
     const entry = copybookMap.get(name.toUpperCase());
     return entry ? entry.path : null;
   };
   const readCopy = (copyPath: string): string | null => {
-    // Find by path match
-    for (const [, entry] of copybookMap) {
-      if (entry.path === copyPath) return entry.content;
-    }
-    return null;
+    return copybookByPath.get(copyPath) ?? null;
   };
 
   // Track module names for cross-program CALL resolution
