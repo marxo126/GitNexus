@@ -104,7 +104,7 @@ export type RelationshipType =
   | 'ENTRY_POINT_OF'  // Route/Tool → Process (this endpoint starts this execution flow)
   | 'WRAPS'           // Function → Function (middleware wrapper chain) — Reserved: future middleware graph traversal (not yet emitted)
   | 'QUERIES'          // File/Function → CodeElement (ORM query to model/table)
-  | 'TRIGGERS'         // File → Webhook, Webhook → Webhook (event producer→consumer)
+  | 'TRIGGERS'         // File → Webhook (event handler link)
   | 'ENQUEUES'         // File → CodeElement (producer enqueues work to a queue)
   | 'PROCESSES'        // File → CodeElement (consumer processes work from a queue)
 
