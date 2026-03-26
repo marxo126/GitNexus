@@ -3311,7 +3311,7 @@ export const processQueuePatterns = (graph: KnowledgeGraph, patterns: ExtractedQ
     const qid = generateId('CodeElement', 'queue:' + qn);
     if (!graph.getNode(qid)) { graph.addNode({ id: qid, label: 'CodeElement', properties: { name: qn, filePath: qp[0].filePath, description: 'Queue: ' + qn } }); queuesCreated++; }
     for (const pt of qp) {
-      const fid = generateId('File', pt.filePath), rt = (pt.role === 'producer' || pt.role === 'workflow') ? 'ENQUEUES' : 'PROCESSES';
+      const fid = generateId('File', pt.filePath), rt = pt.role === 'producer' ? 'ENQUEUES' : 'PROCESSES';
       graph.addRelationship({ id: generateId(rt, fid+'->'+qid+':'+pt.lineNumber), sourceId: fid, targetId: qid, type: rt, confidence: 0.9, reason: pt.role+'-'+(pt.method ?? 'handler') });
       edgesCreated++;
     }

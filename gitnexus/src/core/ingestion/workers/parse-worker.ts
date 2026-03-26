@@ -77,6 +77,7 @@ import {
   buildCollisionGroups,
 } from '../utils/method-props.js';
 import type { LanguageProvider } from '../language-provider.js';
+import { extractQueuePatterns } from '../utils/queue-extraction.js';
 
 // ============================================================================
 // Types for serializable results
@@ -219,7 +220,7 @@ export interface ExtractedORMQuery {
 
 export interface ExtractedQueuePattern {
   filePath: string;
-  role: 'producer' | 'consumer' | 'workflow' | 'activity';
+  role: 'producer' | 'consumer';
   queueName: string;
   method?: string;
   handlerName?: string;
@@ -699,28 +700,7 @@ const cachedExportCheck = (
 
 // DEFINITION_CAPTURE_KEYS and getDefinitionNodeFromCaptures imported from ../utils.js
 
-
-
-// BullMQ + Temporal Queue Pattern Extraction
-const BULLMQ_ADD_RE = /(\w+)\.(add|addBulk)\s*\(/g;
-const BULLMQ_WORKER_RE = /new\s+Worker\s*\(\s*['"](\w[\w-]*)['"]/g;
-const TEMPORAL_ACTIVITY_RE = /activities\.(\w+)\s*\(/g;
-const TEMPORAL_WORKFLOW_START_RE = /client\.workflow\.(start|execute)\s*\(\s*(\w+)/g;
-export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
-  const hasBullMQ = content.includes('new Queue') || content.includes('new Worker');
-  const hasTemporal = content.includes('activities.') || content.includes('client.workflow.');
-  if (!hasBullMQ && !hasTemporal) return;
-  if (hasBullMQ) {
-    const queueVarMap = new Map<string, string>(); const assignRe = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['"](\w[\w-]*)['"]/g; assignRe.lastIndex = 0; let m;
-    while ((m = assignRe.exec(content)) !== null) { queueVarMap.set(m[1], m[2]); }
-    BULLMQ_ADD_RE.lastIndex = 0; while ((m = BULLMQ_ADD_RE.exec(content)) !== null) { const qn = queueVarMap.get(m[1]); if (qn) { out.push({ filePath, role: 'producer', queueName: qn, method: m[2], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); } }
-    BULLMQ_WORKER_RE.lastIndex = 0; while ((m = BULLMQ_WORKER_RE.exec(content)) !== null) { out.push({ filePath, role: 'consumer', queueName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
-  }
-  if (hasTemporal) { let m;
-    TEMPORAL_ACTIVITY_RE.lastIndex = 0; while ((m = TEMPORAL_ACTIVITY_RE.exec(content)) !== null) { out.push({ filePath, role: 'activity', queueName: m[1], handlerName: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
-    TEMPORAL_WORKFLOW_START_RE.lastIndex = 0; while ((m = TEMPORAL_WORKFLOW_START_RE.exec(content)) !== null) { out.push({ filePath, role: 'workflow', queueName: m[2], method: m[1], lineNumber: content.substring(0, m.index).split('\n').length - 1 }); }
-  }
-}
+// extractQueuePatterns is imported from ../utils/queue-extraction.js (shared with pipeline.ts)
 
 // ============================================================================
 // Process a batch of files
