@@ -71,11 +71,13 @@ Indicator col 7
                         buffer as new pending logical line
 ```
 
-After all lines are processed, the final pending line is flushed, along with any accumulated SELECT statement.
+After all lines are processed, the final pending line is flushed, along with any accumulated SELECT statement, SORT/MERGE accumulator, and any open EXEC block (truncated file without `END-EXEC`).
 
 ### Inline Comment Stripping
 
-Enterprise COBOL (particularly Italian dialect) uses the pipe character `|` as an inline comment marker. Everything from `|` to end of line is stripped before processing.
+Enterprise COBOL (particularly Italian dialect) uses the pipe character `|` as an inline comment marker. The `stripInlineComment()` helper is **quote-aware**: it tracks whether the scan position is inside a single- or double-quoted string and only treats `|` as a comment marker when outside quotes. Pipe characters inside string literals are preserved.
+
+Free-format `*>` inline comment stripping uses the same quote-aware approach: the scanner walks character by character, toggling quote state, and only recognizes `*>` as a comment marker when not inside a quoted string.
 
 ### Patch Marker Handling
 
@@ -111,7 +113,7 @@ All patterns are compiled once as module-level constants and reused across calls
 
 | Constant | Pattern | Purpose | Example Match |
 |----------|---------|---------|---------------|
-| `RE_SELECT_START` | `\bSELECT\s+([A-Z][A-Z0-9-]+)` | File SELECT start | `SELECT MASTER-FILE` |
+| `RE_SELECT_START` | `\bSELECT\s+(?:OPTIONAL\s+)?([A-Z][A-Z0-9-]+)` | File SELECT start (with optional `SELECT OPTIONAL` support) | `SELECT MASTER-FILE`, `SELECT OPTIONAL TRANS-FILE` |
 
 SELECT statements are accumulated across multiple lines until a period terminator is found, then parsed for ASSIGN, ORGANIZATION, ACCESS, RECORD KEY, and FILE STATUS clauses.
 
@@ -135,7 +137,9 @@ The trailing clauses of `RE_DATA_ITEM` are parsed by `parseDataItemClauses()` fo
 | `RE_PERFORM` | `\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+THRU\s+([A-Z][A-Z0-9-]+))?` | PERFORM call | `PERFORM CALC-TAX THRU CALC-TAX-EXIT` |
 | `RE_PROC_USING` | `\bPROCEDURE\s+DIVISION\s+USING\s+([\s\S]*?)(?:\.\|$)` | USING parameters | `PROCEDURE DIVISION USING WK-PARAM` |
 | `RE_ENTRY` | `\bENTRY\s+"([^"]+)"(?:\s+USING\s+([\s\S]*?))?(?:\.\|$)` | ENTRY point | `ENTRY "SUBPROG" USING WK-DATA` |
-| `RE_MOVE` | `\bMOVE\s+(CORRESPONDING\s+)?([A-Z][A-Z0-9-]+)\s+TO\s+([A-Z][A-Z0-9-]+)` | MOVE statement | `MOVE WK-NAME TO OUT-NAME` |
+| `RE_MOVE` | `\bMOVE\s+((?:CORRESPONDING\|CORR)\s+)?([A-Z][A-Z0-9-]+)\s+TO\s+(.+)` | MOVE statement (supports CORR abbreviation and multi-target) | `MOVE WK-NAME TO OUT-NAME`, `MOVE CORR WK-IN TO WK-OUT` |
+
+The USING parameter list (`RE_PROC_USING`) is split on `\bRETURNING\b` before tokenization -- any RETURNING clause and everything after it is excluded from the parameter list (`.split(/\bRETURNING\b/i)[0]`).
 
 Note: `RE_PROC_SECTION` and `RE_PROC_PARAGRAPH` require exactly 7 spaces of leading indentation (COBOL area A starting at column 8). This is the standard COBOL paragraph indentation.
 
@@ -148,6 +152,22 @@ These patterns are checked regardless of current division:
 | `RE_CALL` | `\bCALL\s+"([^"]+)"` | External program call | `CALL "BGTABUP"` |
 | `RE_COPY_UNQUOTED` | `\bCOPY\s+([A-Z][A-Z0-9-]+)(?:\s\|\.)` | COPY (unquoted) | `COPY CPSESP.` |
 | `RE_COPY_QUOTED` | `\bCOPY\s+"([^"]+)"(?:\s\|\.)` | COPY (quoted) | `COPY "WORKGRID.CPY".` |
+
+### SORT/MERGE Support
+
+| Constant | Purpose |
+|----------|---------|
+| `SORT_CLAUSE_NOISE` | Set of SORT/MERGE clause keywords filtered from USING/GIVING file lists: `ON`, `ASCENDING`, `DESCENDING`, `KEY`, `WITH`, `DUPLICATES`, `IN`, `ORDER`, `COLLATING`, `SEQUENCE`, `IS`, `THROUGH`, `THRU`, `INPUT`, `OUTPUT`, `PROCEDURE` |
+
+SORT and MERGE statements are accumulated across multiple lines (like SELECT) until a period terminator is found, then parsed for USING/GIVING file lists and INPUT/OUTPUT PROCEDURE targets. The `flushSort()` helper encapsulates the flush-and-parse logic, mirroring the existing `flushSelect()` pattern. Both helpers are called at EOF to handle truncated files.
+
+### GO TO Multi-Target
+
+`RE_GOTO` captures all paragraph names in a `GO TO` statement, including the multi-target form `GO TO p1 p2 p3 DEPENDING ON x`. The captured group contains all target names (space-separated), which are split into individual targets. Each target produces a separate `gotos` entry.
+
+### PROGRAM-ID Detection
+
+PROGRAM-ID is detected regardless of the current division state. This handles sibling programs that appear after `END PROGRAM` and omit the `IDENTIFICATION DIVISION` header -- the extractor will still capture the PROGRAM-ID and push a new program boundary.
 
 ### EXEC Block Patterns
 

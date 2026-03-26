@@ -45,6 +45,31 @@ GITNEXUS_COBOL_DIRS=s,c,wfproc GITNEXUS_VERBOSE=1 node --max-old-space-size=8192
   /path/to/gitnexus/dist/cli/index.js analyze --force
 ```
 
+## Open-Source Benchmarks
+
+### CardDemo (AWS)
+
+| Metric | Value |
+| ------ | ----- |
+| Graph nodes | 12,323 |
+| Graph edges | 8,893 |
+| Total time | 7.4s |
+
+### ACAS
+
+| Metric | Value |
+| ------ | ----- |
+| Graph nodes | 14,016 |
+| Graph edges | 15,452 |
+| Total time | 9.3s |
+
+### Micro-Benchmark (Single-File Extraction)
+
+| Metric | Value |
+| ------ | ----- |
+| Per-iteration | 0.65ms |
+| Throughput | ~382K lines/sec |
+
 ## Worker Pool Tuning
 
 ### Sub-Batch Size
@@ -108,6 +133,10 @@ The cap truncates data items beyond the 500th in source order. Since 01-level Re
 To increase the cap for specific needs, modify the `MAX_DATA_ITEMS_PER_FILE` constant in both files.
 
 ## Memory Management
+
+### COPY Expansion Breadth Guard
+
+A per-file `MAX_TOTAL_EXPANSIONS = 500` limit prevents exponential blowup from diamond-shaped COPY graphs (e.g., N copybooks each containing N COPY statements). Once the limit is reached, further COPY statements in that file are left unexpanded. See [copy-expansion.md](copy-expansion.md) for details.
 
 ### COPY Expansion Memory
 

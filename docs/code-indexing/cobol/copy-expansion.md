@@ -84,19 +84,27 @@ sequenceDiagram
     end
 ```
 
+The return type `CopyExpansionResult` contains `expandedContent` and `copyResolutions`. The `expansionDepth` field has been removed from the return type (it was unused by callers).
+
+COPY statement line numbers in `CopyResolution` are 1-based (consistent with the preprocessor's line numbering). The splice operation that replaces COPY lines with expanded content adjusts for 0-based array indexing internally.
+
 ## Cycle Detection
 
 Circular COPY references (e.g., copybook A includes copybook B which includes copybook A) are detected and handled:
 
 1. Each expansion chain maintains a `visited` set of resolved copybook paths
 2. If a copybook path is already in the visited set, the expansion is skipped
-3. A `warnedCircular` set (shared across all files in a chunk) deduplicates warning messages
+3. A `warnedCircular` set (internal to `expandCopies()`, not a parameter) deduplicates warning messages within a single file expansion
 
 Known circular copybooks in PROJECT-NAME: `ANAZI`, `ANDIP`, `QDIPE` (self-referential includes).
 
 ## Max Depth
 
 Nested COPY expansion is limited to **10 levels** (`DEFAULT_MAX_DEPTH`). If a COPY chain exceeds this depth, a warning is logged and the remaining COPY statements are left unexpanded.
+
+## Max Total Expansions
+
+A breadth amplification guard caps the total number of COPY expansions across all branches within a single file to **500** (`MAX_TOTAL_EXPANSIONS`). This prevents exponential blowup from diamond-shaped COPY graphs where N copybooks each include N other copybooks. Once the limit is reached, further COPY statements in that file are left unexpanded and a single warning is logged.
 
 ## REPLACING Application Detail
 
@@ -138,6 +146,10 @@ The expansion runs **per chunk**, after file content is read but before dispatch
 2. Per chunk, the copybook map is merged with chunk content (in case a chunk contains copybooks)
 3. Only programs (not copybooks themselves) undergo expansion
 4. The expanded content replaces the original content in-place before worker dispatch
+
+## Inline Comment Handling
+
+The copy expander's `stripInlineComment()` helper is quote-aware: pipe characters (`|`) inside single- or double-quoted strings are preserved. This matches the same quote-aware logic used by the preprocessor.
 
 ## Source Files
 

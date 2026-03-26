@@ -100,9 +100,11 @@ Tables are extracted from SQL clauses:
 | Clause Pattern | Example |
 |----------------|---------|
 | `FROM <table>` | `SELECT * FROM EMPLOYEES` |
-| `INTO <table>` | `INSERT INTO EMPLOYEES` |
+| `INSERT INTO <table>` | `INSERT INTO EMPLOYEES` |
 | `UPDATE <table>` | `UPDATE EMPLOYEES SET ...` |
 | `JOIN <table>` | `LEFT JOIN DEPARTMENTS ON ...` |
+
+Note: The `INTO` pattern is restricted to `INSERT INTO` to avoid false positives from `FETCH ... INTO :host-var` and `SELECT ... INTO :host-var` statements, where `INTO` introduces host variables rather than table names.
 
 ### Cursor Detection
 
@@ -242,21 +244,66 @@ The USING clause identifies parameters received by the program from its caller.
 
 ## MOVE Statements
 
-MOVE statements are extracted but currently only stored in the regex results (not emitted as graph edges):
+MOVE statements produce `ACCESSES` edges in the graph:
 
 ```cobol
        MOVE WK-NAME TO OUT-NAME.
        MOVE CORRESPONDING WK-INPUT TO WK-OUTPUT.
+       MOVE CORR WK-IN TO WK-OUT.
 ```
 
 ### Extraction Details
 
 - Source and target identifiers are captured
-- `CORRESPONDING` keyword is tracked (bulk field-by-field move)
+- `CORRESPONDING` and its abbreviation `CORR` are both recognized (bulk field-by-field move)
 - Figurative constants (SPACES, ZEROS, LOW-VALUES, HIGH-VALUES, QUOTES, ALL) are skipped
 - The enclosing paragraph (`caller`) is tracked for context
 
-DATA_FLOW edges from MOVE statements are reserved for a future release.
+### MOVE CORRESPONDING / CORR Edge Reasons
+
+MOVE CORRESPONDING (and CORR) produces distinct edge reasons to differentiate from simple MOVE:
+
+| Edge | Reason (simple MOVE) | Reason (CORRESPONDING/CORR) |
+|------|---------------------|-----------------------------|
+| Read (source) | `cobol-move-read` | `cobol-move-corresponding-read` |
+| Write (target) | `cobol-move-write` | `cobol-move-corresponding-write` |
+
+This distinction allows queries to find bulk field-by-field moves separately from simple variable assignments.
+
+## GO TO DEPENDING ON
+
+The `GO TO` statement with multiple targets and a `DEPENDING ON` clause is a computed branch:
+
+```cobol
+       GO TO PARA-1 PARA-2 PARA-3
+           DEPENDING ON WK-SELECTOR.
+```
+
+All target paragraph names are extracted and emitted as separate `gotos` entries. Each target produces a `CALLS` edge in the graph (same semantics as PERFORM). The `DEPENDING ON` variable is not currently tracked as a data-flow dependency.
+
+## SORT INPUT/OUTPUT PROCEDURE
+
+SORT and MERGE statements can specify procedural entry points instead of file-based I/O:
+
+```cobol
+       SORT SORT-FILE ON ASCENDING KEY SORT-KEY
+           INPUT PROCEDURE IS PREPARE-INPUT
+           OUTPUT PROCEDURE IS FORMAT-OUTPUT.
+```
+
+`INPUT PROCEDURE IS` and `OUTPUT PROCEDURE IS` targets are extracted as control-flow targets (same as PERFORM). They produce `performs` entries and corresponding `CALLS` edges in the graph.
+
+## Fixed-Format Literal Continuation
+
+In fixed-format COBOL, string literals can span multiple lines using the continuation indicator (`-` in column 7). When a continuation line starts with a quote character, the extractor joins it with the predecessor by removing the trailing quote from the previous line and the opening quote from the continuation:
+
+```
+Line N:          MOVE "THIS IS A LONG STRI
+Line N+1 (cont): -    "NG VALUE" TO WK-FIELD.
+Merged:          MOVE "THIS IS A LONG STRING VALUE" TO WK-FIELD.
+```
+
+The trailing `"` on line N and the opening `"` on line N+1 are both removed, producing a seamless literal. If no matching quote is found on the predecessor line, the continuation is appended as-is.
 
 ## Source Files
 
