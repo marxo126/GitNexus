@@ -1151,7 +1151,7 @@ export function extractCobolSymbolsWithRegex(
         flushCallAccum();
       }
       // Don't return — line may contain other extractable constructs after the period
-    } else if (/\bCALL\s+(?:"[^"]+"|'[^']+'|[A-Z][A-Z0-9-]+)/i.test(line)) {
+    } else if (/(?<![A-Z0-9-])\bCALL\s+(?:"[^"]+"|'[^']+'|[A-Z][A-Z0-9-]+)/i.test(line)) {
       // Check if this is a complete single-line CALL (ends with period or END-CALL)
       if (/\.\s*$/.test(line) || /\bEND-CALL\b/i.test(line)) {
         // Single-line CALL — extract immediately via flushCallAccum
@@ -1343,7 +1343,7 @@ export function extractCobolSymbolsWithRegex(
     for (const callMatch of text.matchAll(RE_CALL)) {
       const callTarget = callMatch[1] ?? callMatch[2];
       const afterCall = text.substring(callMatch.index! + callMatch[0].length);
-      const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\bINSPECT\b|\bSEARCH\b|\bSORT\b|\bMERGE\b|\bDISPLAY\b|\bACCEPT\b|\bMOVE\b|\bPERFORM\b|\bGO\s+TO\b|\bCALL\b|\bIF\b|\bEVALUATE\b|\.\s*$|$)/i);
       const parameters = usingMatch
         ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
             .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
@@ -1356,7 +1356,7 @@ export function extractCobolSymbolsWithRegex(
     // Extract dynamic CALLs from the full statement
     for (const dynCallMatch of text.matchAll(RE_CALL_DYNAMIC)) {
       const afterDynCall = text.substring(dynCallMatch.index! + dynCallMatch[0].length);
-      const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\bINSPECT\b|\bSEARCH\b|\bSORT\b|\bMERGE\b|\bDISPLAY\b|\bACCEPT\b|\bMOVE\b|\bPERFORM\b|\bGO\s+TO\b|\bCALL\b|\bIF\b|\bEVALUATE\b|\.\s*$|$)/i);
       const dynParameters = dynUsingMatch
         ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
             .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))

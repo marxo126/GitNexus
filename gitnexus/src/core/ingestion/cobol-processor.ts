@@ -227,8 +227,8 @@ export const processCobol = (
         confidence: rel.reason === 'cobol-cancel-unresolved' ? 0.9 : 0.95,
         reason: resolvedReason,
       });
-    } else if (rel.reason === 'cics-link-unresolved' || rel.reason === 'cics-xctl-unresolved') {
-      // Replace unresolved CICS LINK/XCTL with resolved edge
+    } else if (rel.reason?.startsWith('cics-') && rel.reason.endsWith('-unresolved')) {
+      // Replace unresolved CICS LINK/XCTL/LOAD with resolved edge
       graph.addRelationship({
         id: rel.id + ':resolved',
         type: 'CALLS',
@@ -815,7 +815,7 @@ function mapToGraph(
 
     // CICS FILE I/O -> ACCESSES edges (READ/WRITE/REWRITE/DELETE/STARTBR/ENDBR FILE)
     if (cics.fileName) {
-      const fileRecordId = generateId('Record', `${filePath}:${cics.fileName}`);
+      const fileRecordId = generateId('Record', `<cics-file>:${cics.fileName.toUpperCase()}`);
       const ioCommand = cics.command.toUpperCase();
       const isRead = ['READ', 'STARTBR', 'READNEXT', 'READPREV', 'READ NEXT', 'READ PREV', 'ENDBR'].includes(ioCommand);
       const isWrite = ['WRITE', 'REWRITE', 'DELETE'].includes(ioCommand);
