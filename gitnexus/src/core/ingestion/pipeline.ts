@@ -21,6 +21,9 @@ import { processHeritage, processHeritageFromExtracted } from './heritage-proces
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
+import { detectStateSlots } from './state-slot-detectors/index.js';
+import type { ExtractedStateSlot } from './state-slot-detectors/index.js';
+import { processStateSlots } from './state-slot-processor.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { PipelineProgress, PipelineResult } from '../../types/pipeline.js';
@@ -544,6 +547,7 @@ async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allStateSlots: ExtractedStateSlot[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -665,6 +669,8 @@ async function runChunkedParseAndResolve(
   // Accumulate MCP/RPC tool definitions (@mcp.tool(), @app.tool(), etc.)
   const allToolDefs: ExtractedToolDef[] = [];
     const allORMQueries: ExtractedORMQuery[] = [];
+  // Accumulate state slot detections for Phase 3.7
+  const allStateSlots: ExtractedStateSlot[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -796,6 +802,11 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.ormQueries?.length) {
           allORMQueries.push(...chunkWorkerData.ormQueries);
         }
+        // Detect state slots (React Query, SWR, etc.) from file contents
+        for (const [filePath, content] of chunkContents) {
+          const slots = detectStateSlots(content, filePath);
+          if (slots.length > 0) allStateSlots.push(...slots);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -891,7 +902,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allStateSlots };
 }
 
 /**
@@ -1113,7 +1124,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allStateSlots } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1378,9 +1389,25 @@ export const runPipelineFromRepo = async (
       }
     }
 
-    // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
+    // ── Phase 3.7a: ORM Dataflow Detection (Prisma + Supabase) ─────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
+    }
+
+    // ── Phase 3.7b: State Slot Detection ────────────────────────────────────────
+    if (allStateSlots.length > 0) {
+      onProgress({
+        phase: 'state-slots',
+        percent: 89,
+        message: `Processing ${allStateSlots.length} state slot(s)...`,
+        stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+      });
+
+      const slotResult = processStateSlots(allStateSlots, graph);
+
+      if (isDev) {
+        console.log(`🗄️ State slots: ${slotResult.slotsCreated} created, ${slotResult.producesEdges} PRODUCES, ${slotResult.consumesEdges} CONSUMES, ${slotResult.overlapWarnings.length} overlap warnings, ${slotResult.routeChainsApplied} route-chains, ${slotResult.wrapperHooksResolved} wrapper-hooks`);
+      }
     }
 
     // ── Phase 14: Cross-file binding propagation (topological level sort) ──
