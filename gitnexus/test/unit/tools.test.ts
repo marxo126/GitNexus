@@ -11,8 +11,8 @@ import { describe, it, expect } from 'vitest';
 import { GITNEXUS_TOOLS, type ToolDefinition } from '../../src/mcp/tools.js';
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(11);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 1 dead_code)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(12);
   });
 
   it('contains all expected tool names', () => {
@@ -20,7 +20,7 @@ describe('GITNEXUS_TOOLS', () => {
     expect(names).toEqual(
       expect.arrayContaining([
         'list_repos', 'query', 'cypher', 'context',
-        'detect_changes', 'rename', 'impact', 'api_impact',
+        'detect_changes', 'rename', 'impact', 'api_impact', 'dead_code',
       ])
     );
   });
