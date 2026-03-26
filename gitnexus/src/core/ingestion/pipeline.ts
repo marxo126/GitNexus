@@ -9,7 +9,8 @@ import {
   buildImportResolutionContext
 } from './import-processor.js';
 import { EMPTY_INDEX } from './import-resolvers/utils.js';
-import { processCalls, processCallsFromExtracted, processAssignmentsFromExtracted, processRoutesFromExtracted, processNextjsFetchRoutes, extractFetchCallsFromFiles, seedCrossFileReceiverTypes, buildImportedReturnTypes, buildImportedRawReturnTypes, type ExportedTypeMap, buildExportedTypeMapFromGraph } from './call-processor.js';
+import { processCalls, processCallsFromExtracted, processAssignmentsFromExtracted, processRoutesFromExtracted, processNextjsFetchRoutes, extractFetchCallsFromFiles, processSwiftUINavigation, seedCrossFileReceiverTypes, buildImportedReturnTypes, buildImportedRawReturnTypes, type ExportedTypeMap, buildExportedTypeMapFromGraph } from './call-processor.js';
+import { extractSwiftUINavigations, type ExtractedNavigation } from './swiftui-navigation.js';
 import { nextjsFileToRouteURL, normalizeFetchURL } from './route-extractors/nextjs.js';
 import { expoFileToRouteURL } from './route-extractors/expo.js';
 import { phpFileToRouteURL } from './route-extractors/php.js';
@@ -545,6 +546,7 @@ async function runChunkedParseAndResolve(
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
   allWebhooks: ExtractedWebhook[];
+  allNavigations: ExtractedNavigation[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -667,6 +669,7 @@ async function runChunkedParseAndResolve(
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
   const allWebhooks: ExtractedWebhook[] = [];
+  const allNavigations: ExtractedNavigation[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -792,6 +795,9 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.decoratorRoutes?.length) {
           allDecoratorRoutes.push(...chunkWorkerData.decoratorRoutes);
         }
+        if (chunkWorkerData.navigations?.length) {
+          allNavigations.push(...chunkWorkerData.navigations);
+        }
         if (chunkWorkerData.toolDefs?.length) {
           allToolDefs.push(...chunkWorkerData.toolDefs);
         }
@@ -839,6 +845,10 @@ async function runChunkedParseAndResolve(
     // Extract ORM queries (sequential path)
     for (const f of chunkFiles) {
       extractORMQueriesInline(f.path, f.content, allORMQueries);
+    }
+    // Extract SwiftUI navigation patterns (sequential path)
+    for (const file of chunkFiles) {
+      extractSwiftUINavigations(file.path, file.content, allNavigations);
     }
     astCache.clear();
   }
@@ -896,7 +906,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations };
 }
 
 /**
@@ -1118,7 +1128,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1386,6 +1396,13 @@ export const runPipelineFromRepo = async (
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
+    }
+    // ── Phase 3.8: SwiftUI Navigation Graph ──────────────────────────
+    if (allNavigations.length > 0) {
+      const navEdges = processSwiftUINavigation(graph, allNavigations);
+      if (isDev) {
+        console.log(`🧭 SwiftUI navigation: ${navEdges} NAVIGATES_TO edges from ${allNavigations.length} patterns`);
+      }
     }
 
     // ── Phase 3.8: Webhook/Event Handler Detection ──────────────────

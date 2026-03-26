@@ -112,6 +112,7 @@ export type RelationshipType =
   | 'TRIGGERS'         // File → Webhook (event handler link)
   | 'ENQUEUES'         // File → CodeElement (producer enqueues work to a queue)
   | 'PROCESSES'        // File → CodeElement (consumer processes work from a queue)
+  | 'NAVIGATES_TO'    // Struct → Struct (SwiftUI View navigation)
 
 export interface GraphNode {
   id:  string,

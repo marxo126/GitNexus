@@ -30,7 +30,7 @@ export const REL_TABLE_NAME = 'CodeRelation';
 
 // Valid relation types
 // Note: WRAPS is reserved for future middleware graph traversal (not yet emitted)
-export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES'] as const;
+export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES', 'NAVIGATES_TO'] as const;
 export type RelType = typeof REL_TYPES[number];
 
 // ============================================================================
@@ -374,6 +374,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM \`Struct\` TO Interface,
   FROM \`Struct\` TO \`Constructor\`,
   FROM \`Struct\` TO \`Property\`,
+  FROM \`Struct\` TO File,
   FROM \`Enum\` TO \`Enum\`,
   FROM \`Enum\` TO Community,
   FROM \`Enum\` TO Class,

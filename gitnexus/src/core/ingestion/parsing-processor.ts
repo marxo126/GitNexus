@@ -15,6 +15,7 @@ import type { LanguageProvider } from './language-provider.js';
 import { WorkerPool } from './workers/worker-pool.js';
 import type { ParseWorkerResult, ParseWorkerInput, ExtractedImport, ExtractedCall, ExtractedAssignment, ExtractedHeritage, ExtractedRoute, ExtractedFetchCall, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedWebhook, FileConstructorBindings, FileTypeEnvBindings, ExtractedORMQuery } from './workers/parse-worker.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
+import type { ExtractedNavigation } from './swiftui-navigation.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -29,6 +30,7 @@ export interface WorkerExtractedData {
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
   webhooks: ExtractedWebhook[];
+  navigations: ExtractedNavigation[];
   constructorBindings: FileConstructorBindings[];
   typeEnvBindings: FileTypeEnvBindings[];
 }
@@ -52,7 +54,7 @@ const processParsingWithWorkers = async (
     if (lang) parseableFiles.push({ path: file.path, content: file.content });
   }
 
-  if (parseableFiles.length === 0) return { imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], constructorBindings: [], typeEnvBindings: [] };
+  if (parseableFiles.length === 0) return { imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], navigations: [], constructorBindings: [], typeEnvBindings: [] };
 
   const total = files.length;
 
@@ -75,6 +77,7 @@ const processParsingWithWorkers = async (
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
   const allWebhooks: ExtractedWebhook[] = [];
+  const allNavigations: ExtractedNavigation[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const allTypeEnvBindings: FileTypeEnvBindings[] = [];
   for (const result of chunkResults) {
@@ -111,6 +114,7 @@ const processParsingWithWorkers = async (
     allToolDefs.push(...result.toolDefs);
     if (result.ormQueries) allORMQueries.push(...result.ormQueries);
     allWebhooks.push(...result.webhooks);
+    if (result.navigations) allNavigations.push(...result.navigations);
     allConstructorBindings.push(...result.constructorBindings);
     allTypeEnvBindings.push(...result.typeEnvBindings);
   }
@@ -131,7 +135,7 @@ const processParsingWithWorkers = async (
 
   // Final progress
   onFileProgress?.(total, total, 'done');
-  return { imports: allImports, calls: allCalls, assignments: allAssignments, heritage: allHeritage, routes: allRoutes, fetchCalls: allFetchCalls, decoratorRoutes: allDecoratorRoutes, toolDefs: allToolDefs, ormQueries: allORMQueries, webhooks: allWebhooks, constructorBindings: allConstructorBindings, typeEnvBindings: allTypeEnvBindings };
+  return { imports: allImports, calls: allCalls, assignments: allAssignments, heritage: allHeritage, routes: allRoutes, fetchCalls: allFetchCalls, decoratorRoutes: allDecoratorRoutes, toolDefs: allToolDefs, ormQueries: allORMQueries, webhooks: allWebhooks, navigations: allNavigations, constructorBindings: allConstructorBindings, typeEnvBindings: allTypeEnvBindings };
 };
 
 // ============================================================================
