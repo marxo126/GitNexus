@@ -64,6 +64,9 @@ function getNextStepHint(toolName: string, args: Record<string, any> | undefined
     case 'cypher':
       return `\n\n---\n**Next:** To explore a result symbol, use context({name: "<name>"${repoParam}}). For schema reference, READ gitnexus://repo/${repoPath}/schema.`;
 
+    case 'dead_code':
+      return `\n\n---\n**Next:** Use context({name: "<symbol_name>"${repoParam}}) to verify a flagged symbol is truly unused. Then use impact({target: "<name>", direction: "upstream"${repoParam}}) before removing it.`;
+
     // Legacy tool names — still return useful hints
     case 'search':
       return `\n\n---\n**Next:** To understand a result in context, use context({name: "<symbol_name>"${repoParam}}).`;
