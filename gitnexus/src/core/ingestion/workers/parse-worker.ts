@@ -77,6 +77,9 @@ import {
   buildCollisionGroups,
 } from '../utils/method-props.js';
 import type { LanguageProvider } from '../language-provider.js';
+import type { ExtractedJSXElement } from '../a11y-rules/types.js';
+import { extractJSXElements } from '../a11y-rules/jsx-extractor.js';
+import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
 
 // ============================================================================
 // Types for serializable results
@@ -269,6 +272,10 @@ export interface ParseWorkerResult {
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
+  /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
+  typeEnvBindings: FileTypeEnvBindings[];
+  /** Extracted JSX elements for a11y analysis */
+  jsxElements: ExtractedJSXElement[];
   skippedLanguages: Record<string, number>;
   fileCount: number;
 }
@@ -711,6 +718,8 @@ const processBatch = (
     ormQueries: [],
     constructorBindings: [],
     fileScopeBindings: [],
+    typeEnvBindings: [],
+    jsxElements: [],
     skippedLanguages: {},
     fileCount: 0,
   };
@@ -2259,6 +2268,14 @@ const processFileGroup = (
         });
       }
     }
+
+    // Extract JSX elements for a11y analysis (tsx/jsx files only)
+    if (file.path.endsWith('.tsx') || file.path.endsWith('.jsx')) {
+      const jsxElements = extractJSXElements(file.content, file.path);
+      if (jsxElements.length > 0) {
+        result.jsxElements.push(...jsxElements);
+      }
+    }
   }
 };
 
@@ -2282,6 +2299,8 @@ let accumulated: ParseWorkerResult = {
   ormQueries: [],
   constructorBindings: [],
   fileScopeBindings: [],
+  typeEnvBindings: [],
+  jsxElements: [],
   skippedLanguages: {},
   fileCount: 0,
 };
@@ -2309,6 +2328,8 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.ormQueries, src.ormQueries);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
+  appendAll(target.typeEnvBindings, src.typeEnvBindings);
+  appendAll(target.jsxElements, src.jsxElements);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
     target.skippedLanguages[lang] = (target.skippedLanguages[lang] || 0) + count;
   }
@@ -2360,6 +2381,8 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         ormQueries: [],
         constructorBindings: [],
         fileScopeBindings: [],
+        typeEnvBindings: [],
+        jsxElements: [],
         skippedLanguages: {},
         fileCount: 0,
       };

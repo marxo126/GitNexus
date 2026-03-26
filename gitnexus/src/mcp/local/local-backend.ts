@@ -89,6 +89,7 @@ export const VALID_NODE_LABELS = new Set([
   'Module',
   'Route',
   'Tool',
+  'A11ySignal',
 ]);
 
 /** Valid relation types for impact analysis filtering */
@@ -108,6 +109,7 @@ export const VALID_RELATION_TYPES = new Set([
   'HANDLES_TOOL',
   'ENTRY_POINT_OF',
   'WRAPS',
+  'HAS_A11Y_SIGNAL',
 ]);
 
 /**
@@ -497,6 +499,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'wcag_audit':
+        return this.wcagAudit(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -3216,6 +3220,119 @@ export class LocalBackend {
         type: s.type || s[1],
         filePath: s.filePath || s[2],
       })),
+    };
+  }
+
+  private async wcagAudit(repo: RepoHandle, params: {
+    route?: string; criterion?: string; status?: string; component?: string;
+  }): Promise<any> {
+    // Note: route and component params are accepted for future use (route→file
+    // join, component→enclosingFunction filter) but not yet wired.
+    await this.ensureInitialized(repo.id);
+
+    // Build filter — all params are parameterized (no string interpolation)
+    const conditions: string[] = [];
+    const queryParams: Record<string, any> = {};
+    if (params.criterion) { conditions.push('n.criterion = $criterion'); queryParams.criterion = params.criterion; }
+    if (params.status) { conditions.push('n.signalStatus = $status'); queryParams.status = params.status; }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Query all A11ySignal nodes
+    const signals = await executeParameterized(repo.id, `
+      MATCH (n:A11ySignal) ${where}
+      RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.criterion AS criterion,
+             n.signalStatus AS status, n.severity AS severity, n.element AS element,
+             n.startLine AS startLine, n.complianceTag AS complianceTag, n.confidence AS confidence
+      ORDER BY n.severity, n.criterion
+    `, queryParams);
+
+    if (!signals || signals.length === 0) {
+      return { score: { percent: 100, met: 0, total: 0 }, findings: [], routes: [], total: 0 };
+    }
+
+    // Group by criterion for scoring + build fix-pattern index in one pass
+    const byCriterion = new Map<string, { violations: number; needsReview: number; passes: number }>();
+    const firstPassByCriterion = new Map<string, string>(); // criterion → "filePath:line"
+    let violationCount = 0;
+    let needsReviewCount = 0;
+
+    for (const s of signals) {
+      const key = s.criterion;
+      if (!byCriterion.has(key)) byCriterion.set(key, { violations: 0, needsReview: 0, passes: 0 });
+      const entry = byCriterion.get(key)!;
+      if (s.status === 'violation') {
+        entry.violations++;
+        violationCount++;
+      } else if (s.status === 'needs-review') {
+        entry.needsReview++;
+        needsReviewCount++;
+      } else {
+        entry.passes++;
+        // Record first passing signal per criterion for fix-pattern suggestions
+        if (!firstPassByCriterion.has(key)) {
+          firstPassByCriterion.set(key, `${s.filePath}:${s.startLine}`);
+        }
+      }
+    }
+
+    // Compute score — only violations count against compliance (not needs-review)
+    const totalCriteria = byCriterion.size;
+    const metCriteria = [...byCriterion.values()].filter(v => v.violations === 0).length;
+    const percent = totalCriteria > 0 ? Math.round((metCriteria / totalCriteria) * 100) : 100;
+
+    // Build review prompts for needs-review items
+    const REVIEW_PROMPTS: Record<string, (s: any) => string> = {
+      'input-label': (s) => `Check if <${s.element}> at ${s.filePath}:${s.startLine} has label association via htmlFor, aria-label, or parent <label> wrapping`,
+      'keyboard': (s) => `Check if ${s.element} at ${s.filePath}:${s.startLine} has keyboard handling via parent component or event delegation`,
+      'noKeyboardTrap': (s) => `Check if ${s.element} at ${s.filePath}:${s.startLine} has Escape key handling for focus trap dismissal`,
+      'bypassBlocks': (s) => `Check if layout at ${s.filePath} has a skip-to-content link (may be in a parent layout or wrapper component)`,
+      'pageTitled': (s) => `Check if page at ${s.filePath} has a title via metadata export, Head component, or parent layout`,
+      'statusMessages': (s) => `Check if ${s.element} at ${s.filePath}:${s.startLine} uses aria-live or a role with implicit live semantics`,
+      'videoCaptions': (s) => `Check if <video> at ${s.filePath}:${s.startLine} has captions via <track> element or external caption service`,
+      'landmarks': (s) => `Check if layout at ${s.filePath} has semantic landmark elements (main, nav, header)`,
+      'img-alt': (s) => `Check if <img> at ${s.filePath}:${s.startLine} has alt text (may be provided by resolved component)`,
+      'nameRoleValue': (s) => `Check if ${s.element} at ${s.filePath}:${s.startLine} has an explicit ARIA role or is inside a component that provides one`,
+      'iconButtonLabel': (s) => `Check if <button> at ${s.filePath}:${s.startLine} has accessible name (may be provided by resolved component)`,
+      'languagePage': (s) => `Check if root layout at ${s.filePath} has an html element with lang attribute`,
+    };
+
+    // Format findings (non-pass signals only), attach fix patterns and review prompts
+    // Sort: definite confidence first, heuristic last
+    const CONFIDENCE_ORDER: Record<string, number> = { definite: 0, likely: 1, heuristic: 2 };
+    const allFindings = signals.filter((s: any) => s.status !== 'pass').map((s: any) => {
+      const finding: Record<string, any> = {
+        criterion: s.criterion,
+        name: s.name,
+        status: s.status,
+        severity: s.severity,
+        element: s.element,
+        file: s.filePath,
+        line: s.startLine,
+        complianceTag: s.complianceTag,
+        confidence: s.confidence,
+      };
+      const fixPattern = firstPassByCriterion.get(s.criterion);
+      if (fixPattern) finding.fixPattern = fixPattern;
+      // Add review prompt for needs-review items
+      if (s.status === 'needs-review') {
+        const promptFn = REVIEW_PROMPTS[s.name];
+        if (promptFn) finding.reviewPrompt = promptFn(s);
+      }
+      return finding;
+    }).sort((a: any, b: any) => (CONFIDENCE_ORDER[a.confidence] ?? 1) - (CONFIDENCE_ORDER[b.confidence] ?? 1));
+
+    // Separate into violations and needs-review
+    const violations = allFindings.filter((f: any) => f.status === 'violation');
+    const needsReview = allFindings.filter((f: any) => f.status === 'needs-review');
+
+    return {
+      score: { percent, met: metCriteria, total: totalCriteria },
+      violations,
+      needsReview,
+      findings: allFindings,
+      total: allFindings.length,
+      violationCount,
+      needsReviewCount,
     };
   }
 

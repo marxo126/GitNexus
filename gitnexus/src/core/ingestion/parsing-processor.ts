@@ -47,6 +47,8 @@ import type {
   ExtractedORMQuery,
 } from './workers/parse-worker.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
+import { extractJSXElements } from './a11y-rules/jsx-extractor.js';
+import type { ExtractedJSXElement } from './a11y-rules/types.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -62,6 +64,8 @@ export interface WorkerExtractedData {
   ormQueries: ExtractedORMQuery[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
+  typeEnvBindings: FileTypeEnvBindings[];
+  jsxElements: import('./a11y-rules/types.js').ExtractedJSXElement[];
 }
 
 // ============================================================================
@@ -96,6 +100,8 @@ const processParsingWithWorkers = async (
       ormQueries: [],
       constructorBindings: [],
       fileScopeBindings: [],
+      typeEnvBindings: [],
+      jsxElements: [],
     };
 
   const total = files.length;
@@ -120,6 +126,8 @@ const processParsingWithWorkers = async (
   const allORMQueries: ExtractedORMQuery[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
+  const allTypeEnvBindings: FileTypeEnvBindings[] = [];
+  const allJSXElements: import('./a11y-rules/types.js').ExtractedJSXElement[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
       graph.addNode({
@@ -157,6 +165,8 @@ const processParsingWithWorkers = async (
     for (const item of result.constructorBindings) allConstructorBindings.push(item);
     if (result.fileScopeBindings)
       for (const item of result.fileScopeBindings) fileScopeBindingsByFile.push(item);
+    if (result.jsxElements) allJSXElements.push(...result.jsxElements);
+    if (result.typeEnvBindings) allTypeEnvBindings.push(...result.typeEnvBindings);
   }
 
   // Merge and log skipped languages from workers
@@ -187,6 +197,8 @@ const processParsingWithWorkers = async (
     ormQueries: allORMQueries,
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
+    typeEnvBindings: allTypeEnvBindings,
+    jsxElements: allJSXElements,
   };
 };
 
@@ -295,6 +307,8 @@ function seqGetFieldInfo(
   seqFieldInfoCache.set(cacheKey, cached);
   return cached;
 }
+
+const JSX_EXTENSIONS = new Set(['.tsx', '.jsx']);
 
 const processParsingSequential = async (
   graph: KnowledgeGraph,
@@ -663,6 +677,7 @@ const processParsingSequential = async (
         });
       }
     });
+
   }
 
   if (skippedLanguages.size > 0) {
@@ -703,7 +718,7 @@ export const processParsing = async (
     }
   }
 
-  // Fallback: sequential parsing (no pre-extracted data)
+  // Fallback: sequential parsing (processes imports/calls/heritage inline into graph)
   await processParsingSequential(graph, files, symbolTable, astCache, onFileProgress);
   return null;
 };

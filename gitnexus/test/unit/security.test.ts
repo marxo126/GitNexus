@@ -123,6 +123,7 @@ describe('VALID_RELATION_TYPES', () => {
       'HANDLES_TOOL',
       'ENTRY_POINT_OF',
       'WRAPS',
+      'HAS_A11Y_SIGNAL',
     ]) {
       expect(VALID_RELATION_TYPES.has(t)).toBe(true);
     }

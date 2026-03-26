@@ -13,6 +13,7 @@ export type PipelinePhase =
   | 'communities'
   | 'processes'
   | 'enriching'
+  | 'a11y'
   | 'complete'
   | 'error';
 

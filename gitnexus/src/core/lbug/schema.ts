@@ -196,6 +196,22 @@ CREATE NODE TABLE Tool (
   PRIMARY KEY (id)
 )`;
 
+// WCAG accessibility signals
+export const A11Y_SIGNAL_SCHEMA = `
+CREATE NODE TABLE A11ySignal (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  criterion STRING,
+  signalStatus STRING,
+  severity STRING,
+  element STRING,
+  startLine INT64,
+  complianceTag STRING,
+  confidence STRING,
+  PRIMARY KEY (id)
+)`;
+
 // Markdown heading sections
 export const SECTION_SCHEMA = `
 CREATE NODE TABLE Section (
@@ -420,6 +436,9 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM CodeElement TO Process,
   FROM Route TO Process,
   FROM Tool TO Process,
+  FROM Function TO A11ySignal,
+  FROM Method TO A11ySignal,
+  FROM File TO A11ySignal,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -510,6 +529,8 @@ export const NODE_SCHEMA_QUERIES = [
   ROUTE_SCHEMA,
   // MCP tools
   TOOL_SCHEMA,
+  // WCAG accessibility signals
+  A11Y_SIGNAL_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];
