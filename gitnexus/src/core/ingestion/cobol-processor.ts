@@ -463,7 +463,7 @@ function mapToGraph(
       ?? sectionNodeIds.get(`${pgm ?? ''}:${name.toUpperCase()}`);
   };
   const scopedCallerLookup = (name: string | null, lineNum: number): string => {
-    if (!name) return parentId;
+    if (!name) return owningModuleId(lineNum);
     const pgm = findOwningProgramName(lineNum, extracted.programs);
     return paraNodeIds.get(`${pgm ?? ''}:${name.toUpperCase()}`)
       ?? (programModuleIds.get(pgm ?? '') ?? parentId);
@@ -890,10 +890,11 @@ function mapToGraph(
   // ── SORT/MERGE -> ACCESSES edges ──────────────────────────────
   for (const sort of extracted.sorts) {
     const sortFileId = generateId('Record', `${filePath}:${sort.sortFile}`);
+    const sortOwner = owningModuleId(sort.line);
     for (const usingFile of sort.usingFiles) {
       const usingId = generateId('Record', `${filePath}:${usingFile}`);
       graph.addRelationship({
-        id: generateId('ACCESSES', `${parentId}->sort-using->${usingFile}:L${sort.line}`),
+        id: generateId('ACCESSES', `${sortOwner}->sort-using->${usingFile}:L${sort.line}`),
         type: 'ACCESSES',
         sourceId: sortFileId,
         targetId: usingId,
@@ -904,7 +905,7 @@ function mapToGraph(
     for (const givingFile of sort.givingFiles) {
       const givingId = generateId('Record', `${filePath}:${givingFile}`);
       graph.addRelationship({
-        id: generateId('ACCESSES', `${parentId}->sort-giving->${givingFile}:L${sort.line}`),
+        id: generateId('ACCESSES', `${sortOwner}->sort-giving->${givingFile}:L${sort.line}`),
         type: 'ACCESSES',
         sourceId: sortFileId,
         targetId: givingId,

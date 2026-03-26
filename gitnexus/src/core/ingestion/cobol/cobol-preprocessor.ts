@@ -135,7 +135,9 @@ export interface CobolRegexResults {
  */
 export function preprocessCobolSource(content: string): string {
   // Skip preprocessing for free-format COBOL — cols 1-6 are program text, not sequence area
-  if (/>>SOURCE\s+(?:FORMAT\s+(?:IS\s+)?)?FREE/i.test(content.substring(0, 500))) {
+  // Check first 10 lines (consistent with extractCobolSymbolsWithRegex detection threshold)
+  const firstLines = content.split('\n', 10).join('\n');
+  if (/>>SOURCE\s+(?:FORMAT\s+(?:IS\s+)?)?FREE/i.test(firstLines)) {
     return content;
   }
 
@@ -168,6 +170,8 @@ const EXCLUDED_PARA_NAMES = new Set([
   'SCREEN', 'INPUT-OUTPUT', 'CONFIGURATION',
   // COBOL verbs that appear alone on a line with period (false-positive in free-format)
   'GOBACK', 'STOP', 'EXIT', 'CONTINUE',
+  'DISPLAY', 'ACCEPT', 'WRITE', 'READ', 'REWRITE', 'DELETE',
+  'OPEN', 'CLOSE', 'RETURN', 'RELEASE', 'SORT', 'MERGE',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -212,9 +216,9 @@ const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z]
 // ALL DIVISIONS
 // Both double-quoted ("PROG") and single-quoted ('PROG') targets are valid COBOL.
 // Use separate alternation groups so quotes must match (prevents "PROG' false-matches).
-const RE_CALL = /\bCALL\s+(?:"([^"]+)"|'([^']+)')/i;
+const RE_CALL = /\bCALL\s+(?:"([^"]+)"|'([^']+)')/gi;
 // Dynamic CALL via data item (no quotes): CALL WS-PROGRAM-NAME
-const RE_CALL_DYNAMIC = /(?<![A-Z0-9-])\bCALL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
+const RE_CALL_DYNAMIC = /(?<![A-Z0-9-])\bCALL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/gi;
 const RE_COPY_UNQUOTED = /\bCOPY\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
 const RE_COPY_QUOTED = /\bCOPY\s+(?:"([^"]+)"|'([^']+)')(?:\s|\.)/i;
 
@@ -235,8 +239,8 @@ const RE_MERGE = /\bMERGE\s+([A-Z][A-Z0-9-]+)/i;
 const RE_SEARCH = /\bSEARCH\s+(?:ALL\s+)?([A-Z][A-Z0-9-]+)/i;
 
 // CANCEL — program lifecycle
-const RE_CANCEL = /\bCANCEL\s+(?:"([^"]+)"|'([^']+)')/i;
-const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
+const RE_CANCEL = /\bCANCEL\s+(?:"([^"]+)"|'([^']+)')/gi;
+const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/gi;
 
 // Level 66 RENAMES
 const RE_66_LEVEL = /^\s*66\s+([A-Z][A-Z0-9-]+)\s+RENAMES\s+([A-Z][A-Z0-9-]+)/i;
@@ -942,13 +946,16 @@ export function extractCobolSymbolsWithRegex(
     }
 
     // --- CALL (all divisions, typically procedure) ---
-    const callMatch = line.match(RE_CALL);
-    if (callMatch) {
+    // Global matchAll captures multiple CALLs on same line (e.g. CALL 'A' ON EXCEPTION CALL 'B')
+    let hasQuotedCall = false;
+    for (const callMatch of line.matchAll(RE_CALL)) {
       result.calls.push({ target: callMatch[1] ?? callMatch[2], line: lineNum, isQuoted: true });
-    } else {
-      // Dynamic CALL via data item (no quotes) — not statically resolvable
-      const dynCallMatch = line.match(RE_CALL_DYNAMIC);
-      if (dynCallMatch) {
+      hasQuotedCall = true;
+    }
+    // Also check for dynamic CALL (no quotes) — checked separately, not in else branch
+    for (const dynCallMatch of line.matchAll(RE_CALL_DYNAMIC)) {
+      // Skip if this dynamic CALL overlaps with a quoted CALL already captured
+      if (!hasQuotedCall || !line.substring(0, dynCallMatch.index!).includes('CALL')) {
         result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false });
       }
     }
@@ -1304,13 +1311,14 @@ export function extractCobolSymbolsWithRegex(
       result.searches.push({ target: searchMatch[1], line: lineNum });
     }
 
-    // CANCEL — program lifecycle (quoted = resolvable, unquoted = dynamic annotation)
-    const cancelMatch = line.match(RE_CANCEL);
-    if (cancelMatch) {
+    // CANCEL — program lifecycle (global matchAll captures multiple CANCELs on same line)
+    let hasQuotedCancel = false;
+    for (const cancelMatch of line.matchAll(RE_CANCEL)) {
       result.cancels.push({ target: cancelMatch[1] ?? cancelMatch[2], line: lineNum, isQuoted: true });
-    } else {
-      const dynCancelMatch = line.match(RE_CANCEL_DYNAMIC);
-      if (dynCancelMatch) {
+      hasQuotedCancel = true;
+    }
+    for (const dynCancelMatch of line.matchAll(RE_CANCEL_DYNAMIC)) {
+      if (!hasQuotedCancel || !line.substring(0, dynCancelMatch.index!).includes('CANCEL')) {
         result.cancels.push({ target: dynCancelMatch[1], line: lineNum, isQuoted: false });
       }
     }
