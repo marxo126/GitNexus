@@ -1403,6 +1403,9 @@ const processFileGroup = (
       const extractedRoutes = extractLaravelRoutes(tree, file.path);
       result.routes.push(...extractedRoutes);
     }
+
+    // Extract ORM queries (Prisma, Supabase)
+    extractORMQueries(file.path, file.content, result.ormQueries);
   }
 };
 
