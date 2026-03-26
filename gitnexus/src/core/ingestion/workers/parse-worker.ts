@@ -85,6 +85,9 @@ import {
 import type { LanguageProvider } from '../language-provider.js';
 import type { ParsedFile } from 'gitnexus-shared';
 import { extractParsedFile } from '../scope-extractor-bridge.js';
+import type { ExtractedJSXElement } from '../a11y-rules/types.js';
+import { extractJSXElements } from '../a11y-rules/jsx-extractor.js';
+import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
 
 import { logger } from '../../logger.js';
 // ============================================================================
@@ -287,6 +290,10 @@ export interface ParseWorkerResult {
    * finalize-orchestrator.
    */
   parsedFiles: ParsedFile[];
+  /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
+  typeEnvBindings: FileTypeEnvBindings[];
+  /** Extracted JSX elements for a11y analysis */
+  jsxElements: ExtractedJSXElement[];
   skippedLanguages: Record<string, number>;
   fileCount: number;
 }
@@ -746,6 +753,8 @@ const processBatch = (
     constructorBindings: [],
     fileScopeBindings: [],
     parsedFiles: [],
+    typeEnvBindings: [],
+    jsxElements: [],
     skippedLanguages: {},
     fileCount: 0,
   };
@@ -2326,6 +2335,14 @@ const processFileGroup = (
         });
       }
     }
+
+    // Extract JSX elements for a11y analysis (tsx/jsx files only)
+    if (file.path.endsWith('.tsx') || file.path.endsWith('.jsx')) {
+      const jsxElements = extractJSXElements(file.content, file.path);
+      if (jsxElements.length > 0) {
+        result.jsxElements.push(...jsxElements);
+      }
+    }
   }
 };
 
@@ -2350,6 +2367,8 @@ let accumulated: ParseWorkerResult = {
   constructorBindings: [],
   fileScopeBindings: [],
   parsedFiles: [],
+  typeEnvBindings: [],
+  jsxElements: [],
   skippedLanguages: {},
   fileCount: 0,
 };
@@ -2378,6 +2397,8 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
   appendAll(target.parsedFiles, src.parsedFiles);
+  appendAll(target.typeEnvBindings, src.typeEnvBindings);
+  appendAll(target.jsxElements, src.jsxElements);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
     target.skippedLanguages[lang] = (target.skippedLanguages[lang] || 0) + count;
   }
@@ -2430,6 +2451,8 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         constructorBindings: [],
         fileScopeBindings: [],
         parsedFiles: [],
+        typeEnvBindings: [],
+        jsxElements: [],
         skippedLanguages: {},
         fileCount: 0,
       };

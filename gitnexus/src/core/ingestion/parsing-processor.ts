@@ -53,6 +53,8 @@ import {
   getTreeSitterContentByteLength,
   TREE_SITTER_MAX_BUFFER,
 } from './constants.js';
+import { extractJSXElements } from './a11y-rules/jsx-extractor.js';
+import type { ExtractedJSXElement } from './a11y-rules/types.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -76,6 +78,8 @@ export interface WorkerExtractedData {
    * finalize-orchestrator.
    */
   parsedFiles: ParsedFile[];
+  typeEnvBindings: FileTypeEnvBindings[];
+  jsxElements: ExtractedJSXElement[];
 }
 
 // ============================================================================
@@ -111,6 +115,8 @@ const processParsingWithWorkers = async (
       constructorBindings: [],
       fileScopeBindings: [],
       parsedFiles: [],
+      typeEnvBindings: [],
+      jsxElements: [],
     };
 
   const total = files.length;
@@ -136,6 +142,8 @@ const processParsingWithWorkers = async (
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
   const allParsedFiles: ParsedFile[] = [];
+  const allTypeEnvBindings: FileTypeEnvBindings[] = [];
+  const allJSXElements: ExtractedJSXElement[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
       graph.addNode({
@@ -178,6 +186,8 @@ const processParsingWithWorkers = async (
     // partial rollouts), since the additive contract means undefined =
     // "this worker produced no ParsedFiles for this chunk".
     if (result.parsedFiles) for (const item of result.parsedFiles) allParsedFiles.push(item);
+    if (result.jsxElements) allJSXElements.push(...result.jsxElements);
+    if (result.typeEnvBindings) allTypeEnvBindings.push(...result.typeEnvBindings);
   }
 
   // Merge and log skipped languages from workers
@@ -209,6 +219,8 @@ const processParsingWithWorkers = async (
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
     parsedFiles: allParsedFiles,
+    typeEnvBindings: allTypeEnvBindings,
+    jsxElements: allJSXElements,
   };
 };
 
@@ -317,6 +329,8 @@ function seqGetFieldInfo(
   seqFieldInfoCache.set(cacheKey, cached);
   return cached;
 }
+
+const JSX_EXTENSIONS = new Set(['.tsx', '.jsx']);
 
 const processParsingSequential = async (
   graph: KnowledgeGraph,
@@ -702,6 +716,7 @@ const processParsingSequential = async (
         });
       }
     });
+
   }
 
   if (skippedByLang && skippedByLang.size > 0) {

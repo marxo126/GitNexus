@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'A11ySignal';  // WCAG accessibility signal
 
 export type NodeProperties = {
   name: string;
@@ -115,7 +116,8 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'HAS_A11Y_SIGNAL';  // Function/Method/File → A11ySignal
 
 export interface GraphNode {
   id: string;

@@ -40,6 +40,7 @@ export const NODE_TABLES = [
   'Module',
   'Route',
   'Tool',
+  'A11ySignal',
 ] as const;
 
 export type NodeTableName = (typeof NODE_TABLES)[number];
@@ -67,6 +68,7 @@ export const REL_TYPES = [
   'ENTRY_POINT_OF',
   'WRAPS',
   'QUERIES',
+  'HAS_A11Y_SIGNAL',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];
