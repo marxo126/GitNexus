@@ -35,7 +35,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'        // API route endpoint (e.g., /api/grants)
-  | 'Tool';        // MCP tool definition
+  | 'Tool'         // MCP tool definition
+  | 'Webhook';     // Webhook/event handler endpoint
 
 
 import { SupportedLanguages } from '../../config/supported-languages.js';
@@ -82,6 +83,8 @@ export type NodeProperties = {
   errorKeys?: string[],
   // Middleware wrapper chain (outermost first): ['withRateLimit', 'withCSRF', 'withAuth']
   middleware?: string[],
+  kind?: string,
+  eventTypes?: string[],
 }
 
 export type RelationshipType =
@@ -106,6 +109,9 @@ export type RelationshipType =
   | 'ENTRY_POINT_OF'  // Route/Tool → Process (this endpoint starts this execution flow)
   | 'WRAPS'           // Function → Function (middleware wrapper chain) — Reserved: future middleware graph traversal (not yet emitted)
   | 'QUERIES'          // File/Function → CodeElement (ORM query to model/table)
+  | 'TRIGGERS'         // File → Webhook (event handler link)
+  | 'ENQUEUES'         // File → CodeElement (producer enqueues work to a queue)
+  | 'PROCESSES'        // File → CodeElement (consumer processes work from a queue)
 
 export interface GraphNode {
   id:  string,

@@ -202,6 +202,23 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+export interface ExtractedWebhook {
+  filePath: string;
+  name: string;
+  kind: 'stripe' | 'bullmq-consumer' | 'bullmq-producer' | 'edge-function' | 'realtime' | 'generic';
+  eventTypes: string[];
+  lineNumber: number;
+}
+
+export interface ExtractedQueuePattern {
+  filePath: string;
+  role: 'producer' | 'consumer';
+  queueName: string;
+  method?: string;
+  handlerName?: string;
+  lineNumber: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -228,6 +245,8 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  webhooks: ExtractedWebhook[];
+  queuePatterns: ExtractedQueuePattern[];
   constructorBindings: FileConstructorBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
   typeEnvBindings: FileTypeEnvBindings[];
@@ -454,6 +473,8 @@ const processBatch = (files: ParseWorkerInput[], onProgress?: (filesProcessed: n
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    webhooks: [],
+    queuePatterns: [],
     constructorBindings: [],
     typeEnvBindings: [],
     skippedLanguages: {},
@@ -970,6 +991,132 @@ export function extractORMQueries(filePath: string, content: string, out: Extrac
         lineNumber: content.substring(0, m.index).split('\n').length - 1,
       });
     }
+  }
+}
+
+// ============================================================================
+// Webhook/Event Handler Extraction
+// ============================================================================
+
+export function extractWebhooks(filePath: string, content: string, out: ExtractedWebhook[]): void {
+  const lowerPath = filePath.toLowerCase();
+
+  // Skip test files — they often mock webhook patterns (e.g. Stripe constructEvent in test mocks)
+  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+
+  // Count newlines before offset without allocating substring + split array
+  const lineAt = (offset: number): number => {
+    let n = 0;
+    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    return n;
+  };
+
+  if (content.includes('constructEvent') || content.includes('webhooks.constructEvent')) {
+    const eventTypes: string[] = [];
+    const caseRe = /case\s+['"]([.\w-]+)['"]/g;
+    let m;
+    while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
+    const idx = content.indexOf('constructEvent');
+    out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
+      lineNumber: idx > -1 ? lineAt(idx) : 0 });
+    return;
+  }
+  const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
+  if (edgeFnMatch && content.includes('Deno.serve')) {
+    out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
+      lineNumber: lineAt(content.indexOf('Deno.serve')) });
+    return;
+  }
+  if (content.includes('postgres_changes')) {
+    const channelRe = /\.channel\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+    let m;
+    while ((m = channelRe.exec(content)) !== null) {
+      out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
+        lineNumber: lineAt(m.index) });
+    }
+  }
+  if (lowerPath.includes('webhook') || lowerPath.includes('hook')) {
+    const hasSigVerify = content.includes('x-webhook-signature') || content.includes('x-hub-signature')
+      || content.includes('verify');
+    if (hasSigVerify) {
+      const pathParts = filePath.split('/');
+      const name = pathParts[pathParts.length - 1].replace(/\.(ts|js|tsx|jsx)$/, '');
+      out.push({ filePath, name: `webhook:${name}`, kind: 'generic', eventTypes: [], lineNumber: 0 });
+    }
+  }
+}
+
+/**
+ * Extract message-queue producer/consumer patterns from source code.
+ * Detects: BullMQ, RabbitMQ (amqplib), Kafka (kafkajs), AWS SQS, Celery.
+ */
+export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+
+  const lineAt = (offset: number): number => {
+    let n = 0;
+    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    return n;
+  };
+
+  // BullMQ — new Queue('name') = producer, Worker('name', ...) / process('name', ...) = consumer
+  const bullQueueRe = /new\s+Queue\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  let m;
+  while ((m = bullQueueRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'Queue', lineNumber: lineAt(m.index) });
+  }
+  const bullWorkerRe = /new\s+Worker\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = bullWorkerRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'Worker', lineNumber: lineAt(m.index) });
+  }
+  const bullProcessRe = /\.process\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = bullProcessRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'process', lineNumber: lineAt(m.index) });
+  }
+
+  // RabbitMQ (amqplib) — sendToQueue / publish = producer, consume / assertQueue + consume = consumer
+  const amqpSendRe = /\.sendToQueue\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendToQueue', lineNumber: lineAt(m.index) });
+  }
+  const amqpPublishRe = /\.publish\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpPublishRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: `${m[1]}/${m[2]}`, method: 'publish', lineNumber: lineAt(m.index) });
+  }
+  const amqpConsumeRe = /\.consume\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpConsumeRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'consume', lineNumber: lineAt(m.index) });
+  }
+
+  // Kafka (kafkajs) — producer.send({topic: '...'}) = producer, consumer.subscribe({topic: '...'}) = consumer
+  const kafkaSendRe = /\.send\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = kafkaSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'send', lineNumber: lineAt(m.index) });
+  }
+  const kafkaSubRe = /\.subscribe\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = kafkaSubRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'subscribe', lineNumber: lineAt(m.index) });
+  }
+
+  // AWS SQS — sendMessage/sendMessageBatch with QueueUrl = producer, receiveMessage = consumer
+  const sqsSendRe = /sendMessage(?:Batch)?\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = sqsSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendMessage', lineNumber: lineAt(m.index) });
+  }
+  const sqsRecvRe = /receiveMessage\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = sqsRecvRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'receiveMessage', lineNumber: lineAt(m.index) });
+  }
+
+  // Celery (Python) — @app.task / .delay() / .apply_async()
+  const celeryTaskRe = /@(?:app|celery)\.task[^]*?def\s+(\w+)/g;
+  while ((m = celeryTaskRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'task', handlerName: m[1], lineNumber: lineAt(m.index) });
+  }
+  const celeryCallRe = /(\w+)\.(delay|apply_async)\s*\(/g;
+  while ((m = celeryCallRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: m[2], lineNumber: lineAt(m.index) });
   }
 }
 
@@ -1538,6 +1685,8 @@ const processFileGroup = (
 
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, file.content, result.ormQueries);
+    extractWebhooks(file.path, file.content, result.webhooks);
+    extractQueuePatterns(file.path, file.content, result.queuePatterns);
   }
 };
 
@@ -1548,7 +1697,7 @@ const processFileGroup = (
 /** Accumulated result across sub-batches */
 let accumulated: ParseWorkerResult = {
   nodes: [], relationships: [], symbols: [],
-  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
+  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
 };
 let cumulativeProcessed = 0;
 
@@ -1565,6 +1714,8 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.decoratorRoutes.push(...src.decoratorRoutes);
   target.toolDefs.push(...src.toolDefs);
   target.ormQueries.push(...src.ormQueries);
+  target.webhooks.push(...src.webhooks);
+  target.queuePatterns.push(...src.queuePatterns);
   target.constructorBindings.push(...src.constructorBindings);
   target.typeEnvBindings.push(...src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
@@ -1573,39 +1724,44 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.fileCount += src.fileCount;
 };
 
-parentPort!.on('message', (msg: any) => {
-  try {
-    // Sub-batch mode: { type: 'sub-batch', files: [...] }
-    if (msg && msg.type === 'sub-batch') {
-      const result = processBatch(msg.files, (filesProcessed) => {
-        parentPort!.postMessage({ type: 'progress', filesProcessed: cumulativeProcessed + filesProcessed });
-      });
-      cumulativeProcessed += result.fileCount;
-      mergeResult(accumulated, result);
-      // Signal ready for next sub-batch
-      parentPort!.postMessage({ type: 'sub-batch-done' });
-      return;
-    }
+// Only register message handler when running as a worker thread.
+// When imported directly (e.g. tests importing extractWebhooks),
+// parentPort is null and this block must be skipped.
+if (parentPort) {
+  parentPort.on('message', (msg: any) => {
+    try {
+      // Sub-batch mode: { type: 'sub-batch', files: [...] }
+      if (msg && msg.type === 'sub-batch') {
+        const result = processBatch(msg.files, (filesProcessed) => {
+          parentPort!.postMessage({ type: 'progress', filesProcessed: cumulativeProcessed + filesProcessed });
+        });
+        cumulativeProcessed += result.fileCount;
+        mergeResult(accumulated, result);
+        // Signal ready for next sub-batch
+        parentPort!.postMessage({ type: 'sub-batch-done' });
+        return;
+      }
 
-    // Flush: send accumulated results
-    if (msg && msg.type === 'flush') {
-      parentPort!.postMessage({ type: 'result', data: accumulated });
-      // Reset for potential reuse
-      accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
-      cumulativeProcessed = 0;
-      return;
-    }
+      // Flush: send accumulated results
+      if (msg && msg.type === 'flush') {
+        parentPort!.postMessage({ type: 'result', data: accumulated });
+        // Reset for potential reuse
+        accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
+        cumulativeProcessed = 0;
+        return;
+      }
 
-    // Legacy single-message mode (backward compat): array of files
-    if (Array.isArray(msg)) {
-      const result = processBatch(msg, (filesProcessed) => {
-        parentPort!.postMessage({ type: 'progress', filesProcessed });
-      });
-      parentPort!.postMessage({ type: 'result', data: result });
-      return;
+      // Legacy single-message mode (backward compat): array of files
+      if (Array.isArray(msg)) {
+        const result = processBatch(msg, (filesProcessed) => {
+          parentPort!.postMessage({ type: 'progress', filesProcessed });
+        });
+        parentPort!.postMessage({ type: 'result', data: result });
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      parentPort!.postMessage({ type: 'error', error: message });
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    parentPort!.postMessage({ type: 'error', error: message });
-  }
-});
+  });
+}
