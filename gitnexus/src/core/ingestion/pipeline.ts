@@ -9,7 +9,7 @@ import {
   buildImportResolutionContext
 } from './import-processor.js';
 import { EMPTY_INDEX } from './import-resolvers/utils.js';
-import { processCalls, processCallsFromExtracted, processAssignmentsFromExtracted, processRoutesFromExtracted, processNextjsFetchRoutes, extractFetchCallsFromFiles, processSwiftUINavigation, seedCrossFileReceiverTypes, buildImportedReturnTypes, buildImportedRawReturnTypes, type ExportedTypeMap, buildExportedTypeMapFromGraph } from './call-processor.js';
+import { processCalls, processCallsFromExtracted, processAssignmentsFromExtracted, processRoutesFromExtracted, processNextjsFetchRoutes, extractFetchCallsFromFiles, processSwiftUINavigation, seedCrossFileReceiverTypes, buildImportedReturnTypes, buildImportedRawReturnTypes, processQueuePatterns, type ExportedTypeMap, buildExportedTypeMapFromGraph } from './call-processor.js';
 import { extractSwiftUINavigations, type ExtractedNavigation } from './swiftui-navigation.js';
 import { nextjsFileToRouteURL, normalizeFetchURL } from './route-extractors/nextjs.js';
 import { expoFileToRouteURL } from './route-extractors/expo.js';
@@ -17,7 +17,8 @@ import { phpFileToRouteURL } from './route-extractors/php.js';
 import { extractResponseShapes, extractPHPResponseShapes } from './route-extractors/response-shapes.js';
 import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, compiledMatcherMatchesRoute } from './route-extractors/middleware.js';
 import { generateId } from '../../lib/utils.js';
-import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedWebhook, ExtractedORMQuery } from './workers/parse-worker.js';
+import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedWebhook, ExtractedORMQuery, ExtractedQueuePattern } from './workers/parse-worker.js';
+import { extractQueuePatterns } from './utils/queue-extraction.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
@@ -547,6 +548,7 @@ async function runChunkedParseAndResolve(
   allORMQueries: ExtractedORMQuery[];
   allWebhooks: ExtractedWebhook[];
   allNavigations: ExtractedNavigation[];
+  allQueuePatterns: ExtractedQueuePattern[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -670,6 +672,7 @@ async function runChunkedParseAndResolve(
   const allORMQueries: ExtractedORMQuery[] = [];
   const allWebhooks: ExtractedWebhook[] = [];
   const allNavigations: ExtractedNavigation[] = [];
+  const allQueuePatterns: ExtractedQueuePattern[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -807,6 +810,9 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.webhooks?.length) {
           allWebhooks.push(...chunkWorkerData.webhooks);
         }
+        if (chunkWorkerData.queuePatterns?.length) {
+          allQueuePatterns.push(...chunkWorkerData.queuePatterns);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -849,6 +855,9 @@ async function runChunkedParseAndResolve(
     // Extract SwiftUI navigation patterns (sequential path)
     for (const file of chunkFiles) {
       extractSwiftUINavigations(file.path, file.content, allNavigations);
+    }
+    for (const f of chunkFiles) {
+      extractQueuePatterns(f.path, f.content, allQueuePatterns);
     }
     astCache.clear();
   }
@@ -906,7 +915,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns };
 }
 
 /**
@@ -1128,7 +1137,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1392,6 +1401,12 @@ export const runPipelineFromRepo = async (
         console.log(`🔧 Tool registry: ${toolDefs.length} tools detected`);
       }
     }
+    // Phase 3.8: Queue/Pipeline Detection (BullMQ + Temporal)
+    if (allQueuePatterns.length > 0) {
+      const qr = processQueuePatterns(graph, allQueuePatterns);
+      if (isDev) { console.log('Queue detection: ' + qr.queuesCreated + ' queues, ' + qr.edgesCreated + ' ENQUEUES/PROCESSES edges'); }
+    }
+
 
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {

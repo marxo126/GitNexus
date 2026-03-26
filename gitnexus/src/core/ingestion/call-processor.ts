@@ -24,7 +24,7 @@ import {
 import { buildTypeEnv, isSubclassOf } from './type-env.js';
 import type { ConstructorBinding } from './type-env.js';
 import { getTreeSitterBufferSize } from './constants.js';
-import type { ExtractedCall, ExtractedAssignment, ExtractedHeritage, ExtractedRoute, ExtractedFetchCall, FileConstructorBindings } from './workers/parse-worker.js';
+import type { ExtractedCall, ExtractedAssignment, ExtractedHeritage, ExtractedRoute, ExtractedFetchCall, ExtractedQueuePattern, FileConstructorBindings } from './workers/parse-worker.js';
 import { normalizeFetchURL, routeMatches } from './route-extractors/nextjs.js';
 import { extractReturnTypeName, stripNullable } from './type-extractors/shared.js';
 import type { LiteralTypeInferrer } from './type-extractors/types.js';
@@ -1684,4 +1684,25 @@ const findStructInIndex = (index: Map<string, { id: string; filePath: string }[]
   if (!entries || entries.length === 0) return undefined;
   if (preferFilePath) { const sameFile = entries.find(e => e.filePath === preferFilePath); if (sameFile) return sameFile.id; }
   return entries[0].id;
+};
+
+// ============================================================================
+// Queue Pattern Processing (BullMQ / Temporal)
+// ============================================================================
+
+export const processQueuePatterns = (graph: KnowledgeGraph, patterns: ExtractedQueuePattern[]): { queuesCreated: number; edgesCreated: number } => {
+  if (patterns.length === 0) return { queuesCreated: 0, edgesCreated: 0 };
+  const byQueue = new Map<string, ExtractedQueuePattern[]>();
+  for (const p of patterns) { const e = byQueue.get(p.queueName); if (e) e.push(p); else byQueue.set(p.queueName, [p]); }
+  let queuesCreated = 0, edgesCreated = 0;
+  for (const [qn, qp] of byQueue) {
+    const qid = generateId('CodeElement', 'queue:' + qn);
+    if (!graph.getNode(qid)) { graph.addNode({ id: qid, label: 'CodeElement', properties: { name: qn, filePath: qp[0].filePath, description: 'Queue: ' + qn } }); queuesCreated++; }
+    for (const pt of qp) {
+      const fid = generateId('File', pt.filePath), rt = pt.role === 'producer' ? 'ENQUEUES' : 'PROCESSES';
+      graph.addRelationship({ id: generateId(rt, fid+'->'+qid+':'+pt.lineNumber), sourceId: fid, targetId: qid, type: rt, confidence: 0.9, reason: pt.role+'-'+(pt.method ?? 'handler') });
+      edgesCreated++;
+    }
+  }
+  return { queuesCreated, edgesCreated };
 };

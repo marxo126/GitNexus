@@ -58,6 +58,7 @@ import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from '../../graph/types.js';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
 import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
+import { extractQueuePatterns } from '../utils/queue-extraction.js';
 
 // ============================================================================
 // Types for serializable results
@@ -456,6 +457,7 @@ const cachedExportCheck = (checker: (node: any, name: string) => boolean, node: 
 
 // DEFINITION_CAPTURE_KEYS and getDefinitionNodeFromCaptures imported from ../utils.js
 
+// extractQueuePatterns is imported from ../utils/queue-extraction.js (shared with pipeline.ts)
 
 // ============================================================================
 // Process a batch of files
