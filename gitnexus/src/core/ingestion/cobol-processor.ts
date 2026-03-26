@@ -56,6 +56,7 @@ export interface CobolProcessResult {
   fileDeclarations: number;
   jclJobs: number;
   jclSteps: number;
+  sqlIncludes: number;
 }
 
 /** Returns true if the file is a COBOL or copybook file. */
@@ -104,6 +105,7 @@ export const processCobol = (
     fileDeclarations: 0,
     jclJobs: 0,
     jclSteps: 0,
+    sqlIncludes: 0,
   };
 
   // ── 1. Separate programs, copybooks, and JCL ───────────────────────
@@ -176,6 +178,7 @@ export const processCobol = (
     result.calls += extracted.calls.length;
     result.copies += extracted.copies.length;
     result.execSqlBlocks += extracted.execSqlBlocks.length;
+    result.sqlIncludes += extracted.execSqlBlocks.filter(s => s.includeMember).length;
     result.execCicsBlocks += extracted.execCicsBlocks.length;
     result.entryPoints += extracted.entryPoints.length;
     result.moves += extracted.moves.length;
@@ -456,6 +459,26 @@ function mapToGraph(
     });
   }
 
+  // ── Build data item Map early (needed by CALL USING, CICS INTO/FROM, MOVE, and USING) ──
+  const dataItemMap = buildDataItemMap(extracted.dataItems, filePath);
+
+  // ── OCCURS DEPENDING ON -> ACCESSES edges (variable-length table deps) ──
+  for (const item of extracted.dataItems) {
+    if (item.name === 'FILLER' || !item.dependingOn) continue;
+    const propId = generatePropertyId(filePath, item);
+    const depFieldId = dataItemMap.get(item.dependingOn.toUpperCase());
+    if (depFieldId) {
+      graph.addRelationship({
+        id: generateId('ACCESSES', `${propId}->depends-on->${item.dependingOn}`),
+        type: 'ACCESSES',
+        sourceId: propId,
+        targetId: depFieldId,
+        confidence: 1.0,
+        reason: 'cobol-depends-on',
+      });
+    }
+  }
+
   // Helper: look up paragraph/section by name scoped to the owning program
   const scopedParaLookup = (name: string, lineNum: number): string | undefined => {
     const pgm = findOwningProgramName(lineNum, extracted.programs);
@@ -533,6 +556,23 @@ function mapToGraph(
         confidence: 1.0,
         reason: 'cobol-dynamic-call',
       });
+
+      // CALL USING parameters for dynamic call too
+      if (call.parameters && call.parameters.length > 0) {
+        for (const param of call.parameters) {
+          const paramPropId = dataItemMap.get(param.toUpperCase());
+          if (paramPropId) {
+            graph.addRelationship({
+              id: generateId('ACCESSES', `${dynCallOwner}->call-using->${param}:L${call.line}`),
+              type: 'ACCESSES',
+              sourceId: dynCallOwner,
+              targetId: paramPropId,
+              confidence: 0.9,
+              reason: 'cobol-call-using',
+            });
+          }
+        }
+      }
       continue;
     }
 
@@ -550,6 +590,23 @@ function mapToGraph(
       confidence: targetModuleId ? 0.95 : 0.5,
       reason: targetModuleId ? 'cobol-call' : 'cobol-call-unresolved',
     });
+
+    // CALL USING parameters -> ACCESSES edges (data flow across programs)
+    if (call.parameters && call.parameters.length > 0) {
+      for (const param of call.parameters) {
+        const paramPropId = dataItemMap.get(param.toUpperCase());
+        if (paramPropId) {
+          graph.addRelationship({
+            id: generateId('ACCESSES', `${callOwner}->call-using->${param}:L${call.line}`),
+            type: 'ACCESSES',
+            sourceId: callOwner,
+            targetId: paramPropId,
+            confidence: 0.9,
+            reason: 'cobol-call-using',
+          });
+        }
+      }
+    }
   }
 
   // ── COPY -> IMPORTS relationship ─────────────────────────────────
@@ -602,10 +659,23 @@ function mapToGraph(
         reason: `sql-${sql.operation.toLowerCase()}`,
       });
     }
-  }
 
-  // ── Build data item Map early (needed by CICS INTO/FROM, MOVE, and USING) ──
-  const dataItemMap = buildDataItemMap(extracted.dataItems, filePath);
+    // EXEC SQL INCLUDE -> IMPORTS edge
+    if (sql.includeMember) {
+      // Try to resolve as a copybook
+      const includeTarget = sql.includeMember.toUpperCase();
+      // We don't have copybookMap here, so emit directly as IMPORTS
+      // The edge uses reason 'sql-include' to distinguish from COPY
+      graph.addRelationship({
+        id: generateId('IMPORTS', `${fileNodeId}->sql-include->${includeTarget}:L${sql.line}`),
+        type: 'IMPORTS',
+        sourceId: fileNodeId,
+        targetId: generateId('File', `<unresolved>:${includeTarget}`),
+        confidence: 0.8,
+        reason: 'sql-include',
+      });
+    }
+  }
 
   // ── PROCEDURE DIVISION USING -> ACCESSES edges (parameter contract) ──
   // Iterate per-program to handle nested programs with their own USING clauses

@@ -39,7 +39,7 @@ export interface CobolRegexResults {
   paragraphs: Array<{ name: string; line: number }>;
   sections: Array<{ name: string; line: number }>;
   performs: Array<{ caller: string | null; target: string; thruTarget?: string; line: number }>;
-  calls: Array<{ target: string; line: number; isQuoted: boolean }>;
+  calls: Array<{ target: string; line: number; isQuoted: boolean; parameters?: string[] }>;
   copies: Array<{ target: string; line: number }>;
   dataItems: Array<{
     name: string;
@@ -48,6 +48,7 @@ export interface CobolRegexResults {
     pic?: string;
     usage?: string;
     occurs?: number;
+    dependingOn?: string;
     redefines?: string;
     values?: string[];
     section: 'working-storage' | 'linkage' | 'file' | 'local-storage' | 'screen' | 'unknown';
@@ -78,6 +79,7 @@ export interface CobolRegexResults {
     cursors: string[];
     hostVariables: string[];
     operation: 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'DECLARE' | 'OPEN' | 'CLOSE' | 'FETCH' | 'OTHER';
+    includeMember?: string;
   }>;
   execCicsBlocks: Array<{
     line: number;
@@ -162,6 +164,12 @@ export function preprocessCobolSource(content: string): string {
 
 // COBOL calling-convention keywords to filter from USING parameter lists
 const USING_KEYWORDS = new Set(['BY', 'VALUE', 'REFERENCE', 'CONTENT', 'ADDRESS', 'OF', 'RETURNING']);
+
+// CALL ... USING keyword filter (extends USING_KEYWORDS for CALL-specific forms)
+const CALL_USING_FILTER = new Set([
+  'BY', 'REFERENCE', 'CONTENT', 'VALUE',
+  'ADDRESS', 'OF', 'LENGTH', 'OMITTED',
+]);
 
 const EXCLUDED_PARA_NAMES = new Set([
   'DECLARATIVES', 'END', 'PROCEDURE', 'IDENTIFICATION',
@@ -327,8 +335,10 @@ function parseDataItemClauses(rest: string): {
   usage?: string;
   redefines?: string;
   occurs?: number;
+  dependingOn?: string;
+  value?: string;
 } {
-  const result: { pic?: string; usage?: string; redefines?: string; occurs?: number } = {};
+  const result: { pic?: string; usage?: string; redefines?: string; occurs?: number; dependingOn?: string; value?: string } = {};
 
   // Strip trailing period for easier parsing
   const text = rest.replace(/\.\s*$/, '');
@@ -357,10 +367,14 @@ function parseDataItemClauses(rest: string): {
     result.redefines = redefMatch[1];
   }
 
-  // OCCURS <n> [TIMES]
-  const occursMatch = text.match(/\bOCCURS\s+(\d+)/i);
+  // OCCURS <n> [TO <m>] [TIMES] [DEPENDING ON <field>]
+  const occursMatch = text.match(/\bOCCURS\s+(\d+)(?:\s+TO\s+(\d+))?\s*(?:TIMES\s*)?(?:DEPENDING\s+ON\s+([A-Z][A-Z0-9-]+(?:\s*\([^)]*\))?))?/i);
   if (occursMatch) {
     result.occurs = parseInt(occursMatch[1], 10);
+    if (occursMatch[3]) {
+      // Strip any subscript from DEPENDING ON field
+      result.dependingOn = occursMatch[3].replace(/\s*\([^)]*\)/, '').trim();
+    }
   }
 
   // IS EXTERNAL / IS GLOBAL
@@ -369,6 +383,36 @@ function parseDataItemClauses(rest: string): {
   }
   if (/\bIS\s+GLOBAL\b/i.test(text)) {
     result.usage = (result.usage ?? '') + ' global';
+  }
+
+  // VALUE [IS] literal/constant
+  if (!result.value) {
+    const valueIdx = text.search(/\bVALUE\b/i);
+    if (valueIdx >= 0) {
+      const afterValue = text.substring(valueIdx + 5).replace(/^\s+IS\s+/i, '').trimStart();
+      // Try quoted: "..." or '...' (with optional type prefix X, N, G, B)
+      const quotedMatch = afterValue.match(/^([XNGB])?(?:"([^"]*)"|'([^']*)')/i);
+      if (quotedMatch) {
+        const prefix = quotedMatch[1] ? quotedMatch[1].toUpperCase() : '';
+        result.value = prefix ? `${prefix}'${quotedMatch[2] ?? quotedMatch[3]}'` : (quotedMatch[2] ?? quotedMatch[3]);
+      } else {
+        // Try ALL "..." or ALL '...'
+        const allMatch = afterValue.match(/^ALL\s+(?:"([^"]*)"|'([^']*)')/i);
+        if (allMatch) {
+          result.value = `ALL '${allMatch[1] ?? allMatch[2]}'`;
+        } else {
+          // Try numeric (including negative, decimal)
+          const numMatch = afterValue.match(/^(-?\d+\.?\d*)/);
+          if (numMatch) {
+            result.value = numMatch[1];
+          } else {
+            // Try figurative constant or identifier
+            const identMatch = afterValue.match(/^([A-Z][A-Z0-9-]*)/i);
+            if (identMatch) result.value = identMatch[1].toUpperCase();
+          }
+        }
+      }
+    }
   }
 
   return result;
@@ -486,8 +530,18 @@ function parseExecSqlBlock(block: string, line: number): CobolRegexResults['exec
   const OP_MAP: Record<string, SqlOperation> = {
     SELECT: 'SELECT', INSERT: 'INSERT', UPDATE: 'UPDATE', DELETE: 'DELETE',
     DECLARE: 'DECLARE', OPEN: 'OPEN', CLOSE: 'CLOSE', FETCH: 'FETCH',
+    INCLUDE: 'OTHER',  // we handle INCLUDE specially below
   };
   const operation: SqlOperation = OP_MAP[firstWord] || 'OTHER';
+
+  // EXEC SQL INCLUDE — extract member name for IMPORTS edge
+  let includeMember: string | undefined;
+  if (firstWord === 'INCLUDE') {
+    const includeMatch = body.match(/^INCLUDE\s+(?:'([^']+)'|"([^"]+)"|([A-Z][A-Z0-9_-]+))/i);
+    if (includeMatch) {
+      includeMember = includeMatch[1] ?? includeMatch[2] ?? includeMatch[3];
+    }
+  }
 
   // Extract table names from FROM, INTO (INSERT), UPDATE, DELETE FROM, JOIN
   const tables: string[] = [];
@@ -527,7 +581,7 @@ function parseExecSqlBlock(block: string, line: number): CobolRegexResults['exec
     }
   }
 
-  return { line, tables, cursors, hostVariables, operation };
+  return { line, tables, cursors, hostVariables, operation, includeMember };
 }
 
 // ---------------------------------------------------------------------------
@@ -949,14 +1003,29 @@ export function extractCobolSymbolsWithRegex(
     // Global matchAll captures multiple CALLs on same line (e.g. CALL 'A' ON EXCEPTION CALL 'B')
     let hasQuotedCall = false;
     for (const callMatch of line.matchAll(RE_CALL)) {
-      result.calls.push({ target: callMatch[1] ?? callMatch[2], line: lineNum, isQuoted: true });
+      const callTarget = callMatch[1] ?? callMatch[2];
+      // Extract USING parameters from the text after the CALL target
+      const afterCall = line.substring(callMatch.index! + callMatch[0].length);
+      const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const parameters = usingMatch
+        ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
+            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
+        : undefined;
+      result.calls.push({ target: callTarget, line: lineNum, isQuoted: true, parameters });
       hasQuotedCall = true;
     }
     // Also check for dynamic CALL (no quotes) — checked separately, not in else branch
     for (const dynCallMatch of line.matchAll(RE_CALL_DYNAMIC)) {
       // Skip if this dynamic CALL overlaps with a quoted CALL already captured
       if (!hasQuotedCall || !line.substring(0, dynCallMatch.index!).includes('CALL')) {
-        result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false });
+        // Extract USING parameters from the text after the dynamic CALL target
+        const afterDynCall = line.substring(dynCallMatch.index! + dynCallMatch[0].length);
+        const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+        const dynParameters = dynUsingMatch
+          ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
+              .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
+          : undefined;
+        result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters });
       }
     }
 
@@ -1161,7 +1230,9 @@ export function extractCobolSymbolsWithRegex(
         if (clauses.pic) item.pic = clauses.pic;
         if (clauses.usage) item.usage = clauses.usage;
         if (clauses.occurs !== undefined) item.occurs = clauses.occurs;
+        if (clauses.dependingOn) item.dependingOn = clauses.dependingOn;
         if (clauses.redefines) item.redefines = clauses.redefines;
+        if (clauses.value) item.values = [clauses.value];
 
         result.dataItems.push(item);
 
