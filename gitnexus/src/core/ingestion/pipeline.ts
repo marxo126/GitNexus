@@ -19,6 +19,10 @@ import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, 
 import { generateId } from '../../lib/utils.js';
 import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedWebhook, ExtractedORMQuery, ExtractedQueuePattern } from './workers/parse-worker.js';
 import { extractQueuePatterns } from './utils/queue-extraction.js';
+import type { ExtractedJSXElement } from './a11y-rules/types.js';
+import { runA11yRules } from './a11y-rules/index.js';
+import type { A11ySignal } from './a11y-rules/types.js';
+import { processA11ySignals } from './a11y-processor.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
@@ -553,6 +557,7 @@ async function runChunkedParseAndResolve(
   allNavigations: ExtractedNavigation[];
   allQueuePatterns: ExtractedQueuePattern[];
   allStateSlots: ExtractedStateSlot[];
+  allJSXElements: ExtractedJSXElement[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -679,6 +684,7 @@ async function runChunkedParseAndResolve(
   const allQueuePatterns: ExtractedQueuePattern[] = [];
   // Accumulate state slot detections for Phase 3.7
   const allStateSlots: ExtractedStateSlot[] = [];
+  const allJSXElements: ExtractedJSXElement[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -824,6 +830,9 @@ async function runChunkedParseAndResolve(
           const slots = detectStateSlots(content, filePath);
           if (slots.length > 0) allStateSlots.push(...slots);
         }
+        if (chunkWorkerData.jsxElements?.length) {
+          allJSXElements.push(...chunkWorkerData.jsxElements);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -926,7 +935,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns, allStateSlots };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns, allStateSlots, allJSXElements };
 }
 
 /**
@@ -1148,7 +1157,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns, allStateSlots } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allWebhooks, allNavigations, allQueuePatterns, allStateSlots, allJSXElements } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1469,6 +1478,31 @@ export const runPipelineFromRepo = async (
 
       if (isDev) {
         console.log(`🗄️ State slots: ${slotResult.slotsCreated} created, ${slotResult.producesEdges} PRODUCES, ${slotResult.consumesEdges} CONSUMES, ${slotResult.overlapWarnings.length} overlap warnings, ${slotResult.routeChainsApplied} route-chains, ${slotResult.wrapperHooksResolved} wrapper-hooks`);
+      }
+    }
+
+    // ── Phase 3.8: A11y Detection ──────────────────────────────────────
+    if (allJSXElements.length > 0) {
+      onProgress({ phase: 'a11y', percent: 90, message: `Running WCAG rules on ${allJSXElements.length} JSX element(s)...` });
+
+      // Group elements by file and run rules per-file
+      const byFile = new Map<string, ExtractedJSXElement[]>();
+      for (const el of allJSXElements) {
+        const arr = byFile.get(el.filePath) || [];
+        arr.push(el);
+        byFile.set(el.filePath, arr);
+      }
+
+      const allSignals: A11ySignal[] = [];
+      for (const [filePath, elements] of byFile) {
+        allSignals.push(...runA11yRules(elements, filePath));
+      }
+
+      if (allSignals.length > 0) {
+        const a11yResult = processA11ySignals(allSignals, graph);
+        if (isDev) {
+          console.log(`♿ A11y: ${a11yResult.signalsCreated} signals (${a11yResult.violations} violations, ${a11yResult.warnings} warnings)`);
+        }
       }
     }
 

@@ -20,7 +20,8 @@ export const NODE_TABLES = [
   'Route',
   'Tool',
   'Webhook',
-  'StateSlot'
+  'StateSlot',
+  'A11ySignal'
 ] as const;
 export type NodeTableName = typeof NODE_TABLES[number];
 
@@ -31,7 +32,7 @@ export const REL_TABLE_NAME = 'CodeRelation';
 
 // Valid relation types
 // Note: WRAPS is reserved for future middleware graph traversal (not yet emitted)
-export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES', 'NAVIGATES_TO', 'PRODUCES', 'CONSUMES'] as const;
+export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES', 'NAVIGATES_TO', 'PRODUCES', 'CONSUMES', 'HAS_A11Y_SIGNAL'] as const;
 export type RelType = typeof REL_TYPES[number];
 
 // ============================================================================
@@ -238,6 +239,21 @@ CREATE NODE TABLE StateSlot (
   filePath STRING,
   slotKind STRING,
   cacheKey STRING,
+  PRIMARY KEY (id)
+)`;
+
+// WCAG accessibility signals
+export const A11Y_SIGNAL_SCHEMA = `
+CREATE NODE TABLE A11ySignal (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  criterion STRING,
+  signalStatus STRING,
+  severity STRING,
+  element STRING,
+  startLine INT64,
+  complianceTag STRING,
   PRIMARY KEY (id)
 )`;
 
@@ -472,6 +488,9 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM Route TO Process,
   FROM Tool TO Process,
   FROM Webhook TO Process,
+  FROM Function TO A11ySignal,
+  FROM Method TO A11ySignal,
+  FROM File TO A11ySignal,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -551,6 +570,8 @@ export const NODE_SCHEMA_QUERIES = [
   WEBHOOK_SCHEMA,
   // Shared state slots
   STATE_SLOT_SCHEMA,
+  // WCAG accessibility signals
+  A11Y_SIGNAL_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [

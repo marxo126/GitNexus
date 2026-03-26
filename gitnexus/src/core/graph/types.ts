@@ -37,7 +37,8 @@ export type NodeLabel =
   | 'Route'        // API route endpoint (e.g., /api/grants)
   | 'Tool'         // MCP tool definition
   | 'Webhook'      // Webhook/event handler endpoint
-  | 'StateSlot';   // Shared state: React Query cache, Context, Redux slice, etc.
+  | 'StateSlot'    // Shared state: React Query cache, Context, Redux slice, etc.
+  | 'A11ySignal';  // WCAG accessibility signal
 
 
 import { SupportedLanguages } from '../../config/supported-languages.js';
@@ -89,6 +90,12 @@ export type NodeProperties = {
   // StateSlot-specific
   slotKind?: string;       // react-query | swr | react-context | redux | zustand | trpc | graphql | custom-hook
   cacheKey?: string;        // Literal or pattern of cache/state key
+  // A11ySignal-specific
+  criterion?: string,
+  signalStatus?: string,
+  severity?: string,
+  element?: string,
+  complianceTag?: string,
 }
 
 export type RelationshipType =
@@ -118,7 +125,8 @@ export type RelationshipType =
   | 'PROCESSES'        // File → CodeElement (consumer processes work from a queue)
   | 'NAVIGATES_TO'    // Struct → Struct (SwiftUI View navigation)
   | 'PRODUCES'        // Function/Method -> StateSlot (writes data into shared state)
-  | 'CONSUMES';       // Function/Method -> StateSlot (reads data from shared state)
+  | 'CONSUMES'        // Function/Method -> StateSlot (reads data from shared state)
+  | 'HAS_A11Y_SIGNAL'  // Function/Method/File → A11ySignal (accessibility signal)
 
 export interface GraphNode {
   id:  string,

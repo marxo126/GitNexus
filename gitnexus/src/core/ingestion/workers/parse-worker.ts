@@ -57,6 +57,8 @@ import { preprocessImportPath } from '../import-processor.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from '../../graph/types.js';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
+import type { ExtractedJSXElement } from '../a11y-rules/types.js';
+import { extractJSXElements } from '../a11y-rules/jsx-extractor.js';
 import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
 import { extractQueuePatterns } from '../utils/queue-extraction.js';
 
@@ -253,6 +255,8 @@ export interface ParseWorkerResult {
   constructorBindings: FileConstructorBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
   typeEnvBindings: FileTypeEnvBindings[];
+  /** Extracted JSX elements for a11y analysis */
+  jsxElements: ExtractedJSXElement[];
   skippedLanguages: Record<string, number>;
   fileCount: number;
 }
@@ -503,6 +507,7 @@ const processBatch = (files: ParseWorkerInput[], onProgress?: (filesProcessed: n
     navigations: [],
     constructorBindings: [],
     typeEnvBindings: [],
+    jsxElements: [],
     skippedLanguages: {},
     fileCount: 0,
   };
@@ -1715,6 +1720,14 @@ const processFileGroup = (
     extractQueuePatterns(file.path, file.content, result.queuePatterns);
     // ── SwiftUI Navigation Detection ──
     extractSwiftUINavigations(file.path, file.content, result.navigations);
+
+    // Extract JSX elements for a11y analysis (tsx/jsx files only)
+    if (file.path.endsWith('.tsx') || file.path.endsWith('.jsx')) {
+      const jsxElements = extractJSXElements(file.content, file.path);
+      if (jsxElements.length > 0) {
+        result.jsxElements.push(...jsxElements);
+      }
+    }
   }
 };
 
@@ -1725,7 +1738,7 @@ const processFileGroup = (
 /** Accumulated result across sub-batches */
 let accumulated: ParseWorkerResult = {
   nodes: [], relationships: [], symbols: [],
-  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], navigations: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0,
+  imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], navigations: [], constructorBindings: [], typeEnvBindings: [], jsxElements: [], skippedLanguages: {}, fileCount: 0,
 };
 let cumulativeProcessed = 0;
 
@@ -1747,6 +1760,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.navigations.push(...src.navigations);
   target.constructorBindings.push(...src.constructorBindings);
   target.typeEnvBindings.push(...src.typeEnvBindings);
+  target.jsxElements.push(...src.jsxElements);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
     target.skippedLanguages[lang] = (target.skippedLanguages[lang] || 0) + count;
   }
@@ -1775,7 +1789,7 @@ if (parentPort) {
       if (msg && msg.type === 'flush') {
         parentPort!.postMessage({ type: 'result', data: accumulated });
         // Reset for potential reuse
-        accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], navigations: [], constructorBindings: [], typeEnvBindings: [], skippedLanguages: {}, fileCount: 0 };
+        accumulated = { nodes: [], relationships: [], symbols: [], imports: [], calls: [], assignments: [], heritage: [], routes: [], fetchCalls: [], decoratorRoutes: [], toolDefs: [], ormQueries: [], webhooks: [], queuePatterns: [], navigations: [], constructorBindings: [], typeEnvBindings: [], jsxElements: [], skippedLanguages: {}, fileCount: 0 };
         cumulativeProcessed = 0;
         return;
       }
