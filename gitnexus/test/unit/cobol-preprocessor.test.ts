@@ -926,4 +926,384 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.programMetadata.dateWritten).toBe('2025-01-15');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 1: Data Flow Features
+  // -------------------------------------------------------------------------
+  describe('Phase 1: Data Flow Features', () => {
+
+    it('EXEC SQL INCLUDE extracts member name (unquoted)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '           EXEC SQL INCLUDE SQLCA END-EXEC.',
+        '           EXEC SQL INCLUDE CUSTDCL END-EXEC.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const includes = r.execSqlBlocks.filter(b => b.includeMember);
+      expect(includes).toHaveLength(2);
+      expect(includes[0].includeMember).toBe('SQLCA');
+      expect(includes[1].includeMember).toBe('CUSTDCL');
+    });
+
+    it('EXEC SQL INCLUDE handles quoted and underscored member names', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        "           EXEC SQL INCLUDE 'DBRMLIB.MEMBER' END-EXEC.",
+        '           EXEC SQL INCLUDE CUST_TBL_DCL END-EXEC.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const includes = r.execSqlBlocks.filter(b => b.includeMember);
+      expect(includes).toHaveLength(2);
+      expect(includes[0].includeMember).toBe('DBRMLIB.MEMBER');
+      expect(includes[1].includeMember).toBe('CUST_TBL_DCL');
+    });
+
+    it('CALL USING extracts parameters', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           CALL 'AUDITLOG' USING WS-CUST-ID WS-AMOUNT.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.calls).toHaveLength(1);
+      expect(r.calls[0].parameters).toEqual(['WS-CUST-ID', 'WS-AMOUNT']);
+    });
+
+    it('CALL USING filters BY REFERENCE/CONTENT/VALUE keywords', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           CALL 'PGM' USING BY REFERENCE WS-A BY CONTENT WS-B BY VALUE WS-C.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.calls[0].parameters).toEqual(['WS-A', 'WS-B', 'WS-C']);
+    });
+
+    it('CALL USING filters ADDRESS OF and OMITTED', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           CALL 'PGM' USING ADDRESS OF WS-REC OMITTED WS-FLAG.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.calls[0].parameters).toEqual(['WS-REC', 'WS-FLAG']);
+    });
+
+    it('CALL RETURNING extracts return target', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           CALL 'FUNC' USING WS-INPUT RETURNING WS-RESULT.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.calls[0].parameters).toEqual(['WS-INPUT']);
+      expect(r.calls[0].returning).toBe('WS-RESULT');
+    });
+
+    it('OCCURS DEPENDING ON captures controlling field', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-COUNT PIC 9(4).',
+        '       01 WS-TABLE OCCURS 1 TO 100 DEPENDING ON WS-COUNT.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const table = r.dataItems.find(d => d.name === 'WS-TABLE');
+      expect(table).toBeDefined();
+      expect(table!.dependingOn).toBe('WS-COUNT');
+      expect(table!.occurs).toBe(1);
+    });
+
+    it('VALUE clause extracts quoted string', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        "       01 WS-STATUS PIC X VALUE 'A'.",
+        '       01 WS-COUNT PIC 9(4) VALUE 0.',
+        '       01 WS-NAME PIC X(10) VALUE SPACES.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find(d => d.name === 'WS-STATUS')?.values).toEqual(['A']);
+      expect(r.dataItems.find(d => d.name === 'WS-COUNT')?.values).toEqual(['0']);
+      expect(r.dataItems.find(d => d.name === 'WS-NAME')?.values).toEqual(['SPACES']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 2: IMS + Error Handling Features
+  // -------------------------------------------------------------------------
+  describe('Phase 2: IMS + Error Handling Features', () => {
+
+    it('EXEC DLI GU extracts verb, segment, PCB, and INTO', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           EXEC DLI GU USING PCB(2)',
+        '               SEGMENT(CUSTOMER)',
+        '               INTO(CUST-IO-AREA)',
+        '           END-EXEC.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.execDliBlocks).toHaveLength(1);
+      expect(r.execDliBlocks[0].verb).toBe('GU');
+      expect(r.execDliBlocks[0].pcbNumber).toBe(2);
+      expect(r.execDliBlocks[0].segmentName).toBe('CUSTOMER');
+      expect(r.execDliBlocks[0].intoField).toBe('CUST-IO-AREA');
+    });
+
+    it('EXEC DLI ISRT extracts FROM field', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           EXEC DLI ISRT USING PCB(1)',
+        '               SEGMENT(ORDER)',
+        '               FROM(ORDER-IO-AREA)',
+        '           END-EXEC.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.execDliBlocks[0].verb).toBe('ISRT');
+      expect(r.execDliBlocks[0].fromField).toBe('ORDER-IO-AREA');
+    });
+
+    it('EXEC DLI SCHD extracts PSB name', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           EXEC DLI SCHD PSB(CUSTPSB) END-EXEC.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.execDliBlocks[0].verb).toBe('SCHD');
+      expect(r.execDliBlocks[0].psbName).toBe('CUSTPSB');
+    });
+
+    it('DECLARATIVES USE AFTER EXCEPTION extracts file binding', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '      DECLARATIVES.',
+        '      CUST-ERR SECTION.',
+        '          USE AFTER STANDARD ERROR ON CUSTOMER-FILE.',
+        '       CUST-ERR-PARA.',
+        '           DISPLAY "FILE ERROR".',
+        '      END DECLARATIVES.',
+        '       MAIN-PARA.',
+        '           STOP RUN.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.declaratives).toHaveLength(1);
+      expect(r.declaratives[0].sectionName).toBe('CUST-ERR');
+      expect(r.declaratives[0].target).toBe('CUSTOMER-FILE');
+    });
+
+    it('DECLARATIVES with multiple USE sections', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '      DECLARATIVES.',
+        '      ERR-A SECTION.',
+        '          USE AFTER STANDARD EXCEPTION ON FILE-A.',
+        '       ERR-A-PARA.',
+        '           DISPLAY "A".',
+        '      ERR-B SECTION.',
+        '          USE AFTER STANDARD EXCEPTION ON INPUT.',
+        '       ERR-B-PARA.',
+        '           DISPLAY "B".',
+        '      END DECLARATIVES.',
+        '       MAIN-PARA.',
+        '           STOP RUN.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.declaratives).toHaveLength(2);
+      expect(r.declaratives[0].target).toBe('FILE-A');
+      expect(r.declaratives[1].target).toBe('INPUT');
+    });
+
+    it('SET condition TO TRUE extracts targets', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           SET END-OF-FILE TO TRUE.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.sets).toHaveLength(1);
+      expect(r.sets[0].form).toBe('to-true');
+      expect(r.sets[0].targets).toEqual(['END-OF-FILE']);
+    });
+
+    it('SET index UP BY extracts target and value', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           SET IDX-1 UP BY 1.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.sets).toHaveLength(1);
+      expect(r.sets[0].form).toBe('up-by');
+      expect(r.sets[0].targets).toEqual(['IDX-1']);
+      expect(r.sets[0].value).toBe('1');
+    });
+
+    it('INSPECT TALLYING extracts field and counter', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           INSPECT WS-STRING TALLYING WS-COUNT FOR ALL 'A'.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.inspects).toHaveLength(1);
+      expect(r.inspects[0].inspectedField).toBe('WS-STRING');
+      expect(r.inspects[0].counters).toEqual(['WS-COUNT']);
+      expect(r.inspects[0].form).toBe('tallying');
+    });
+
+    it('INSPECT REPLACING detected', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           INSPECT WS-FIELD REPLACING ALL 'A' BY 'B'.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.inspects).toHaveLength(1);
+      expect(r.inspects[0].form).toBe('replacing');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 3-4: Completeness + Niche Features
+  // -------------------------------------------------------------------------
+  describe('Phase 3-4: Completeness + Niche Features', () => {
+
+    it('SELECT OPTIONAL sets isOptional flag', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      ENVIRONMENT DIVISION.',
+        '      INPUT-OUTPUT SECTION.',
+        '      FILE-CONTROL.',
+        "          SELECT OPTIONAL CUST-FILE ASSIGN TO 'CUSTFILE'.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.fileDeclarations).toHaveLength(1);
+      expect(r.fileDeclarations[0].selectName).toBe('CUST-FILE');
+      expect(r.fileDeclarations[0].isOptional).toBe(true);
+    });
+
+    it('ALTERNATE RECORD KEY extraction', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      ENVIRONMENT DIVISION.',
+        '      INPUT-OUTPUT SECTION.',
+        '      FILE-CONTROL.',
+        "          SELECT CUST-FILE ASSIGN TO 'CUSTFILE'",
+        '              RECORD KEY IS CUST-ID',
+        '              ALTERNATE RECORD KEY IS CUST-NAME.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.fileDeclarations[0].recordKey).toBe('CUST-ID');
+      expect(r.fileDeclarations[0].alternateKeys).toEqual(['CUST-NAME']);
+    });
+
+    it('PROGRAM-ID IS COMMON sets isCommon flag', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. OUTER-PGM.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           STOP RUN.',
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. INNER-PGM IS COMMON.',
+        '      PROCEDURE DIVISION.',
+        '       INNER-PARA.',
+        '           STOP RUN.',
+        '       END PROGRAM INNER-PGM.',
+        '       END PROGRAM OUTER-PGM.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const inner = r.programs.find(p => p.name === 'INNER-PGM');
+      expect(inner).toBeDefined();
+      expect(inner!.isCommon).toBe(true);
+      const outer = r.programs.find(p => p.name === 'OUTER-PGM');
+      expect(outer!.isCommon).toBeFalsy();
+    });
+
+    it('IS EXTERNAL and IS GLOBAL as boolean properties', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-SHARED PIC X(10) IS EXTERNAL.',
+        '       01 WS-GLOBAL PIC X(10) IS GLOBAL.',
+        '       01 WS-NORMAL PIC X(10).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find(d => d.name === 'WS-SHARED')?.isExternal).toBe(true);
+      expect(r.dataItems.find(d => d.name === 'WS-GLOBAL')?.isGlobal).toBe(true);
+      expect(r.dataItems.find(d => d.name === 'WS-NORMAL')?.isExternal).toBeUndefined();
+      expect(r.dataItems.find(d => d.name === 'WS-NORMAL')?.isGlobal).toBeUndefined();
+    });
+
+    it('INITIALIZE extracts target', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           INITIALIZE WS-RECORD.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.initializes).toHaveLength(1);
+      expect(r.initializes[0].target).toBe('WS-RECORD');
+    });
+
+    it('AUTHOR and DATE-WRITTEN mapped to programMetadata', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '       AUTHOR. JOHN DOE.',
+        '       DATE-WRITTEN. 2026-03-26.',
+        '       DATE-COMPILED. 2026-03-26.',
+        '       INSTALLATION. MAINFRAME-01.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.programMetadata.author).toBe('JOHN DOE');
+      expect(r.programMetadata.dateWritten).toBe('2026-03-26');
+      expect(r.programMetadata.dateCompiled).toBe('2026-03-26');
+      expect(r.programMetadata.installation).toBe('MAINFRAME-01');
+    });
+  });
 });
