@@ -1408,6 +1408,12 @@ export const runPipelineFromRepo = async (
     }
 
 
+    // Phase 3.8: Queue/Pipeline Detection (BullMQ + Temporal)
+    if (allQueuePatterns.length > 0) {
+      const qr = processQueuePatterns(graph, allQueuePatterns);
+      if (isDev) { console.log('Queue detection: ' + qr.queuesCreated + ' queues, ' + qr.edgesCreated + ' ENQUEUES/PROCESSES edges'); }
+    }
+
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
