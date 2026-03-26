@@ -497,6 +497,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'dead_code':
+        return this.deadCode(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -3039,6 +3041,20 @@ export class LocalBackend {
     }
 
     return { routes: results, total: results.length };
+  }
+
+  private async deadCode(repo: RepoHandle, params: {
+    label?: string;
+    include_tests?: boolean;
+    limit?: number;
+  }): Promise<any> {
+    await this.ensureInitialized(repo.id);
+    const { findDeadCode } = await import('../dead-code.js');
+    return findDeadCode(repo.id, {
+      label: params.label,
+      includeTests: params.include_tests ?? false,
+      limit: params.limit ?? 50,
+    });
   }
 
   // ─── Direct Graph Queries (for resources.ts) ────────────────────

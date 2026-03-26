@@ -453,4 +453,27 @@ WHEN TO USE: Before group_sync or when agents should refresh indexes.`,
       required: ['name'],
     },
   },
+  {
+    name: 'dead_code',
+    description: `Detect unused functions, methods, and classes in the codebase.
+
+Traverses the knowledge graph to find symbols with zero incoming references.
+
+WHEN TO USE: Code cleanup, identifying unused code before refactoring, finding leftover functions after feature removal.
+AFTER THIS: Use context() on flagged symbols to verify they're truly unused. Use impact() to check if removing them is safe.
+
+Returns symbols grouped by file with confidence tags:
+- dead: zero callers, zero imports, not an entry point, not in any execution flow
+- unused_export: exported but never imported by another file`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Repository name or path. Omit if only one repo is indexed.' },
+        label: { type: 'string', description: 'Filter by node type: Function, Method, Class, Constructor. Default: all callable types.' },
+        include_tests: { type: 'boolean', description: 'Include test files in results. Default: false.' },
+        limit: { type: 'number', description: 'Max results. Default: 50.', default: 50 },
+      },
+      required: [],
+    },
+  },
 ];
