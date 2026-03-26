@@ -2395,61 +2395,67 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.fileCount += src.fileCount;
 };
 
-parentPort!.on('message', (msg: WorkerIncomingMessage) => {
-  try {
-    // Legacy single-message mode (backward compat): array of files
-    if (Array.isArray(msg)) {
-      const result = processBatch(msg, (filesProcessed) => {
-        parentPort!.postMessage({ type: 'progress', filesProcessed });
-      });
-      parentPort!.postMessage({ type: 'result', data: result });
-      return;
-    }
-
-    // Sub-batch mode: { type: 'sub-batch', files: [...] }
-    if (msg.type === 'sub-batch') {
-      const result = processBatch(msg.files, (filesProcessed) => {
-        parentPort!.postMessage({
-          type: 'progress',
-          filesProcessed: cumulativeProcessed + filesProcessed,
+// Only register message handler when running as a worker thread.
+// When imported directly (e.g. tests importing extractWebhooks),
+// parentPort is null and this block must be skipped.
+if (parentPort) {
+  parentPort.on('message', (msg: WorkerIncomingMessage) => {
+    try {
+      // Legacy single-message mode (backward compat): array of files
+      if (Array.isArray(msg)) {
+        const result = processBatch(msg, (filesProcessed) => {
+          parentPort!.postMessage({ type: 'progress', filesProcessed });
         });
-      });
-      cumulativeProcessed += result.fileCount;
-      mergeResult(accumulated, result);
-      // Signal ready for next sub-batch
-      parentPort!.postMessage({ type: 'sub-batch-done' });
-      return;
-    }
+        parentPort!.postMessage({ type: 'result', data: result });
+        return;
+      }
 
-    // Flush: send accumulated results
-    if (msg.type === 'flush') {
-      parentPort!.postMessage({ type: 'result', data: accumulated });
-      // Reset for potential reuse
-      accumulated = {
-        nodes: [],
-        relationships: [],
-        symbols: [],
-        imports: [],
-        calls: [],
-        assignments: [],
-        heritage: [],
-        routes: [],
-        fetchCalls: [],
-        decoratorRoutes: [],
-        toolDefs: [],
-        ormQueries: [],
-        webhooks: [],
-        queuePatterns: [],
-        constructorBindings: [],
-        fileScopeBindings: [],
-        skippedLanguages: {},
-        fileCount: 0,
-      };
-      cumulativeProcessed = 0;
-      return;
+      // Sub-batch mode: { type: 'sub-batch', files: [...] }
+      if (msg.type === 'sub-batch') {
+        const result = processBatch(msg.files, (filesProcessed) => {
+          parentPort!.postMessage({
+            type: 'progress',
+            filesProcessed: cumulativeProcessed + filesProcessed,
+          });
+        });
+        cumulativeProcessed += result.fileCount;
+        mergeResult(accumulated, result);
+        // Signal ready for next sub-batch
+        parentPort!.postMessage({ type: 'sub-batch-done' });
+        return;
+      }
+
+      // Flush: send accumulated results
+      if (msg.type === 'flush') {
+        parentPort!.postMessage({ type: 'result', data: accumulated });
+        // Reset for potential reuse
+        accumulated = {
+          nodes: [],
+          relationships: [],
+          symbols: [],
+          imports: [],
+          calls: [],
+          assignments: [],
+          heritage: [],
+          routes: [],
+          fetchCalls: [],
+          decoratorRoutes: [],
+          toolDefs: [],
+          ormQueries: [],
+          webhooks: [],
+          queuePatterns: [],
+          constructorBindings: [],
+          fileScopeBindings: [],
+          typeEnvBindings: [],
+          skippedLanguages: {},
+          fileCount: 0,
+        };
+        cumulativeProcessed = 0;
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      parentPort!.postMessage({ type: 'error', error: message });
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    parentPort!.postMessage({ type: 'error', error: message });
-  }
-});
+  });
+}
