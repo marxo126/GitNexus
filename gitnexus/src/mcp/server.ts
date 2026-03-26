@@ -67,6 +67,9 @@ function getNextStepHint(toolName: string, args: Record<string, any> | undefined
     case 'dead_code':
       return `\n\n---\n**Next:** Use context({name: "<symbol_name>"${repoParam}}) to verify a flagged symbol is truly unused. Then use impact({target: "<name>", direction: "upstream"${repoParam}}) before removing it.`;
 
+    case 'data_flow':
+      return '\n\n💡 Next: Use `context` on any producer/consumer to see its full call chain, or `api_impact` to check the upstream API route.';
+
     // Legacy tool names — still return useful hints
     case 'search':
       return `\n\n---\n**Next:** To understand a result in context, use context({name: "<symbol_name>"${repoParam}}).`;

@@ -19,7 +19,8 @@ export const NODE_TABLES = [
   'TypeAlias', 'Const', 'Static', 'Property', 'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module',
   'Route',
   'Tool',
-  'Webhook'
+  'Webhook',
+  'StateSlot'
 ] as const;
 export type NodeTableName = typeof NODE_TABLES[number];
 
@@ -30,7 +31,7 @@ export const REL_TABLE_NAME = 'CodeRelation';
 
 // Valid relation types
 // Note: WRAPS is reserved for future middleware graph traversal (not yet emitted)
-export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES', 'NAVIGATES_TO'] as const;
+export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'TRIGGERS', 'ENQUEUES', 'PROCESSES', 'NAVIGATES_TO', 'PRODUCES', 'CONSUMES'] as const;
 export type RelType = typeof REL_TYPES[number];
 
 // ============================================================================
@@ -229,6 +230,17 @@ CREATE NODE TABLE Webhook (
   PRIMARY KEY (id)
 )`;
 
+// Shared state slots (React Query cache, Context, Redux slice, etc.)
+export const STATE_SLOT_SCHEMA = `
+CREATE NODE TABLE StateSlot (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  slotKind STRING,
+  cacheKey STRING,
+  PRIMARY KEY (id)
+)`;
+
 // Markdown heading sections
 export const SECTION_SCHEMA = `
 CREATE NODE TABLE Section (
@@ -354,6 +366,10 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM Webhook TO Webhook,
   FROM Webhook TO Function,
   FROM Webhook TO Method,
+  FROM Function TO StateSlot,
+  FROM Method TO StateSlot,
+  FROM File TO StateSlot,
+  FROM StateSlot TO Process,
   FROM CodeElement TO Community,
   FROM Interface TO Community,
   FROM Interface TO Function,
@@ -533,6 +549,8 @@ export const NODE_SCHEMA_QUERIES = [
   TOOL_SCHEMA,
   // Webhooks/event handlers
   WEBHOOK_SCHEMA,
+  // Shared state slots
+  STATE_SLOT_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [
