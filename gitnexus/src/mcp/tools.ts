@@ -295,4 +295,25 @@ Returns: single route object when one match, or { routes: [...], total: N } for 
       required: [],
     },
   },
+  {
+    name: 'wcag_audit',
+    description: `WCAG 2.2 AA accessibility audit for indexed repositories.
+
+WHEN TO USE: When you need to check accessibility compliance, find WCAG violations, or get a compliance score for a page/route/component. Each finding includes EU compliance context tags.
+
+Returns: compliance score, violation list with fix patterns from the codebase, and per-route compliance matrix.
+
+AFTER THIS: Use \`context\` on violating components to see usage, or \`impact\` to check how many pages are affected.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        route: { type: 'string', description: 'Filter by route path' },
+        criterion: { type: 'string', description: 'Filter by WCAG criterion (e.g., "1.1.1")' },
+        status: { type: 'string', description: 'Filter: "violation" or "warning"' },
+        component: { type: 'string', description: 'Filter by component name' },
+        repo: { type: 'string', description: 'Repository name or path.' },
+      },
+      required: [],
+    },
+  },
 ];

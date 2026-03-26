@@ -47,10 +47,11 @@ export const VALID_NODE_LABELS = new Set([
   'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module',
   'Route',
   'Tool',
+  'A11ySignal',
 ]);
 
 /** Valid relation types for impact analysis filtering */
-export const VALID_RELATION_TYPES = new Set(['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS']);
+export const VALID_RELATION_TYPES = new Set(['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL', 'ENTRY_POINT_OF', 'WRAPS', 'HAS_A11Y_SIGNAL']);
 
 /**
  * Per-relation-type confidence floor for impact analysis.
@@ -408,6 +409,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'wcag_audit':
+        return this.wcagAudit(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -2447,6 +2450,85 @@ export class LocalBackend {
       steps: steps.map((s: any) => ({
         step: s.step || s[3], name: s.name || s[0], type: s.type || s[1], filePath: s.filePath || s[2],
       })),
+    };
+  }
+
+  private async wcagAudit(repo: RepoHandle, params: {
+    route?: string; criterion?: string; status?: string; component?: string;
+  }): Promise<any> {
+    // Note: route and component params are accepted for future use (route→file
+    // join, component→enclosingFunction filter) but not yet wired.
+    await this.ensureInitialized(repo.id);
+
+    // Build filter — all params are parameterized (no string interpolation)
+    const conditions: string[] = [];
+    const queryParams: Record<string, any> = {};
+    if (params.criterion) { conditions.push('n.criterion = $criterion'); queryParams.criterion = params.criterion; }
+    if (params.status) { conditions.push('n.signalStatus = $status'); queryParams.status = params.status; }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Query all A11ySignal nodes
+    const signals = await executeParameterized(repo.id, `
+      MATCH (n:A11ySignal) ${where}
+      RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.criterion AS criterion,
+             n.signalStatus AS status, n.severity AS severity, n.element AS element,
+             n.startLine AS startLine, n.complianceTag AS complianceTag
+      ORDER BY n.severity, n.criterion
+    `, queryParams);
+
+    if (!signals || signals.length === 0) {
+      return { score: { percent: 100, met: 0, total: 0 }, findings: [], routes: [], total: 0 };
+    }
+
+    // Group by criterion for scoring + build fix-pattern index in one pass
+    const byCriterion = new Map<string, { violations: number; warnings: number; passes: number }>();
+    const firstPassByCriterion = new Map<string, string>(); // criterion → "filePath:line"
+    let violationCount = 0;
+    let warningCount = 0;
+
+    for (const s of signals) {
+      const key = s.criterion;
+      if (!byCriterion.has(key)) byCriterion.set(key, { violations: 0, warnings: 0, passes: 0 });
+      const entry = byCriterion.get(key)!;
+      if (s.status === 'violation') { entry.violations++; violationCount++; }
+      else if (s.status === 'warning') { entry.warnings++; warningCount++; }
+      else {
+        entry.passes++;
+        // Record first passing signal per criterion for fix-pattern suggestions
+        if (!firstPassByCriterion.has(key)) {
+          firstPassByCriterion.set(key, `${s.filePath}:${s.startLine}`);
+        }
+      }
+    }
+
+    // Compute score
+    const totalCriteria = byCriterion.size;
+    const metCriteria = [...byCriterion.values()].filter(v => v.violations === 0).length;
+    const percent = totalCriteria > 0 ? Math.round((metCriteria / totalCriteria) * 100) : 100;
+
+    // Format findings (non-pass signals only), attach fix patterns from index
+    const findings = signals.filter((s: any) => s.status !== 'pass').map((s: any) => {
+      const finding: Record<string, any> = {
+        criterion: s.criterion,
+        name: s.name,
+        status: s.status,
+        severity: s.severity,
+        element: s.element,
+        file: s.filePath,
+        line: s.startLine,
+        complianceTag: s.complianceTag,
+      };
+      const fixPattern = firstPassByCriterion.get(s.criterion);
+      if (fixPattern) finding.fixPattern = fixPattern;
+      return finding;
+    });
+
+    return {
+      score: { percent, met: metCriteria, total: totalCriteria },
+      findings,
+      total: findings.length,
+      violations: violationCount,
+      warnings: warningCount,
     };
   }
 

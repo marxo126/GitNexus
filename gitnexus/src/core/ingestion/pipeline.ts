@@ -17,6 +17,10 @@ import { extractResponseShapes, extractPHPResponseShapes } from './route-extract
 import { extractMiddlewareChain, extractNextjsMiddlewareConfig, compileMatcher, compiledMatcherMatchesRoute } from './route-extractors/middleware.js';
 import { generateId } from '../../lib/utils.js';
 import type { ExtractedFetchCall, ExtractedRoute, ExtractedDecoratorRoute, ExtractedToolDef, ExtractedORMQuery } from './workers/parse-worker.js';
+import type { ExtractedJSXElement } from './a11y-rules/types.js';
+import { runA11yRules } from './a11y-rules/index.js';
+import type { A11ySignal } from './a11y-rules/types.js';
+import { processA11ySignals } from './a11y-processor.js';
 import { processHeritage, processHeritageFromExtracted } from './heritage-processor.js';
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
@@ -544,6 +548,7 @@ async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allJSXElements: ExtractedJSXElement[];
 }> {
   const symbolTable = ctx.symbols;
 
@@ -665,6 +670,7 @@ async function runChunkedParseAndResolve(
   // Accumulate MCP/RPC tool definitions (@mcp.tool(), @app.tool(), etc.)
   const allToolDefs: ExtractedToolDef[] = [];
     const allORMQueries: ExtractedORMQuery[] = [];
+  const allJSXElements: ExtractedJSXElement[] = [];
 
   try {
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
@@ -796,6 +802,9 @@ async function runChunkedParseAndResolve(
         if (chunkWorkerData.ormQueries?.length) {
           allORMQueries.push(...chunkWorkerData.ormQueries);
         }
+        if (chunkWorkerData.jsxElements?.length) {
+          allJSXElements.push(...chunkWorkerData.jsxElements);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -891,7 +900,7 @@ async function runChunkedParseAndResolve(
   importCtx.index = EMPTY_INDEX; // Release suffix index memory (~30MB for large repos)
   importCtx.normalizedFileList = [];
 
-  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries };
+  return { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allJSXElements };
 }
 
 /**
@@ -1113,7 +1122,7 @@ export const runPipelineFromRepo = async (
     const { scannedFiles, allPaths, totalFiles } = await runScanAndStructure(repoPath, graph, onProgress);
 
     // Phase 3+4: Chunked parse + resolve (imports, calls, heritage, routes)
-    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries } = await runChunkedParseAndResolve(
+    const { exportedTypeMap, allFetchCalls, allExtractedRoutes, allDecoratorRoutes, allToolDefs, allORMQueries, allJSXElements } = await runChunkedParseAndResolve(
       graph, ctx, scannedFiles, allPaths, totalFiles, repoPath, pipelineStart, onProgress,
     );
 
@@ -1381,6 +1390,31 @@ export const runPipelineFromRepo = async (
     // ── Phase 3.7: ORM Dataflow Detection (Prisma + Supabase) ──────────
     if (allORMQueries.length > 0) {
       processORMQueries(graph, allORMQueries, isDev);
+    }
+
+    // ── Phase 3.8: A11y Detection ──────────────────────────────────────
+    if (allJSXElements.length > 0) {
+      onProgress({ phase: 'a11y', percent: 90, message: `Running WCAG rules on ${allJSXElements.length} JSX element(s)...` });
+
+      // Group elements by file and run rules per-file
+      const byFile = new Map<string, ExtractedJSXElement[]>();
+      for (const el of allJSXElements) {
+        const arr = byFile.get(el.filePath) || [];
+        arr.push(el);
+        byFile.set(el.filePath, arr);
+      }
+
+      const allSignals: A11ySignal[] = [];
+      for (const [filePath, elements] of byFile) {
+        allSignals.push(...runA11yRules(elements, filePath));
+      }
+
+      if (allSignals.length > 0) {
+        const a11yResult = processA11ySignals(allSignals, graph);
+        if (isDev) {
+          console.log(`♿ A11y: ${a11yResult.signalsCreated} signals (${a11yResult.violations} violations, ${a11yResult.warnings} warnings)`);
+        }
+      }
     }
 
     // ── Phase 14: Cross-file binding propagation (topological level sort) ──

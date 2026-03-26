@@ -35,7 +35,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'        // API route endpoint (e.g., /api/grants)
-  | 'Tool';        // MCP tool definition
+  | 'Tool'         // MCP tool definition
+  | 'A11ySignal';  // WCAG accessibility signal
 
 
 import { SupportedLanguages } from '../../config/supported-languages.js';
@@ -82,6 +83,12 @@ export type NodeProperties = {
   errorKeys?: string[],
   // Middleware wrapper chain (outermost first): ['withRateLimit', 'withCSRF', 'withAuth']
   middleware?: string[],
+  // A11ySignal-specific
+  criterion?: string,
+  signalStatus?: string,
+  severity?: string,
+  element?: string,
+  complianceTag?: string,
 }
 
 export type RelationshipType =
@@ -106,6 +113,7 @@ export type RelationshipType =
   | 'ENTRY_POINT_OF'  // Route/Tool → Process (this endpoint starts this execution flow)
   | 'WRAPS'           // Function → Function (middleware wrapper chain) — Reserved: future middleware graph traversal (not yet emitted)
   | 'QUERIES'          // File/Function → CodeElement (ORM query to model/table)
+  | 'HAS_A11Y_SIGNAL'  // Function/Method/File → A11ySignal (accessibility signal)
 
 export interface GraphNode {
   id:  string,

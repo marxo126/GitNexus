@@ -72,6 +72,9 @@ function getNextStepHint(toolName: string, args: Record<string, any> | undefined
     case 'overview':
       return `\n\n---\n**Next:** To drill into an area, READ gitnexus://repo/${repoPath}/cluster/{name}. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
 
+    case 'wcag_audit':
+      return '\n\n♿ Next: Use `context` on any violating component to see its full usage, or `impact` to check how many pages are affected.';
+
     default:
       return '';
   }
