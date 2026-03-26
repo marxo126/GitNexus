@@ -57,6 +57,10 @@ export interface CobolProcessResult {
   jclJobs: number;
   jclSteps: number;
   sqlIncludes: number;
+  execDliBlocks: number;
+  declaratives: number;
+  sets: number;
+  inspects: number;
 }
 
 /** Returns true if the file is a COBOL or copybook file. */
@@ -106,6 +110,10 @@ export const processCobol = (
     jclJobs: 0,
     jclSteps: 0,
     sqlIncludes: 0,
+    execDliBlocks: 0,
+    declaratives: 0,
+    sets: 0,
+    inspects: 0,
   };
 
   // ── 1. Separate programs, copybooks, and JCL ───────────────────────
@@ -183,6 +191,10 @@ export const processCobol = (
     result.entryPoints += extracted.entryPoints.length;
     result.moves += extracted.moves.length;
     result.fileDeclarations += extracted.fileDeclarations.length;
+    result.execDliBlocks += extracted.execDliBlocks.length;
+    result.declaratives += extracted.declaratives.length;
+    result.sets += extracted.sets.length;
+    result.inspects += extracted.inspects.length;
   }
 
   // ── 4. Second pass: resolve cross-program CALL targets ─────────────
@@ -880,6 +892,169 @@ function mapToGraph(
     });
     // Register in moduleNodeIds for cross-program resolution
     moduleNodeIds.set(entry.name.toUpperCase(), entryId);
+  }
+
+  // ── DECLARATIVES error handlers -> ACCESSES edges ──────────────────
+  for (const decl of extracted.declaratives) {
+    // Find the section's Namespace node
+    const pgm = findOwningProgramName(decl.line, extracted.programs);
+    const sectionId = sectionNodeIds.get(`${pgm ?? ''}:${decl.sectionName.toUpperCase()}`);
+    if (!sectionId) continue;
+
+    // Create ACCESSES edge from handler section to file/mode
+    const targetId = generateId('Record', `${filePath}:${decl.target}`);
+    graph.addRelationship({
+      id: generateId('ACCESSES', `${sectionId}->error-handler->${decl.target}:L${decl.line}`),
+      type: 'ACCESSES',
+      sourceId: sectionId,
+      targetId,
+      confidence: 0.9,
+      reason: 'cobol-error-handler',
+    });
+  }
+
+  // ── SET statement -> ACCESSES edges ──────────────────
+  for (const set of extracted.sets) {
+    const callerId = scopedCallerLookup(set.caller, set.line);
+    const reason = set.form === 'to-true' ? 'cobol-set-condition' : 'cobol-set-index';
+    for (const target of set.targets) {
+      const targetPropId = dataItemMap.get(target.toUpperCase());
+      if (targetPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callerId}->set->${target}:L${set.line}`),
+          type: 'ACCESSES',
+          sourceId: callerId,
+          targetId: targetPropId,
+          confidence: 0.9,
+          reason,
+        });
+      }
+    }
+    // If SET index has a value that is an identifier (not a number), add read edge
+    if (set.value && /^[A-Z][A-Z0-9-]+$/i.test(set.value)) {
+      const valuePropId = dataItemMap.get(set.value.toUpperCase());
+      if (valuePropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callerId}->set-read->${set.value}:L${set.line}`),
+          type: 'ACCESSES',
+          sourceId: callerId,
+          targetId: valuePropId,
+          confidence: 0.9,
+          reason: 'cobol-set-read',
+        });
+      }
+    }
+  }
+
+  // ── INSPECT -> ACCESSES edges ──────────────────
+  for (const insp of extracted.inspects) {
+    const callerId = scopedCallerLookup(insp.caller, insp.line);
+    const inspFieldId = dataItemMap.get(insp.inspectedField.toUpperCase());
+    if (inspFieldId) {
+      // Read edge (always — INSPECT reads the field)
+      graph.addRelationship({
+        id: generateId('ACCESSES', `${callerId}->inspect-read->${insp.inspectedField}:L${insp.line}`),
+        type: 'ACCESSES',
+        sourceId: callerId,
+        targetId: inspFieldId,
+        confidence: 0.9,
+        reason: 'cobol-inspect-read',
+      });
+      // Write edge (if REPLACING or CONVERTING — modifies the field in-place)
+      if (insp.form !== 'tallying') {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callerId}->inspect-write->${insp.inspectedField}:L${insp.line}`),
+          type: 'ACCESSES',
+          sourceId: callerId,
+          targetId: inspFieldId,
+          confidence: 0.9,
+          reason: 'cobol-inspect-write',
+        });
+      }
+    }
+    // Tally counter write edges
+    for (const counter of insp.counters) {
+      const counterPropId = dataItemMap.get(counter.toUpperCase());
+      if (counterPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callerId}->inspect-tally->${counter}:L${insp.line}`),
+          type: 'ACCESSES',
+          sourceId: callerId,
+          targetId: counterPropId,
+          confidence: 0.9,
+          reason: 'cobol-inspect-tally',
+        });
+      }
+    }
+  }
+
+  // ── EXEC DLI (IMS/DB) -> CodeElement + ACCESSES edges ──────────────
+  for (const dli of extracted.execDliBlocks) {
+    const dliId = generateId('CodeElement', `${filePath}:exec-dli:L${dli.line}`);
+    const dliOwner = owningModuleId(dli.line);
+    graph.addNode({
+      id: dliId,
+      label: 'CodeElement',
+      properties: {
+        name: `EXEC DLI ${dli.verb}`,
+        filePath,
+        startLine: dli.line,
+        endLine: dli.line,
+        language: SupportedLanguages.Cobol,
+        description: [
+          dli.segmentName && `segment:${dli.segmentName}`,
+          dli.pcbNumber !== undefined && `pcb:${dli.pcbNumber}`,
+          dli.psbName && `psb:${dli.psbName}`,
+        ].filter(Boolean).join(' ') || undefined,
+      },
+    });
+    graph.addRelationship({
+      id: generateId('CONTAINS', `${dliOwner}->${dliId}`),
+      type: 'CONTAINS',
+      sourceId: dliOwner,
+      targetId: dliId,
+      confidence: 1.0,
+      reason: 'cobol-exec-dli',
+    });
+    // ACCESSES edge to IMS segment (like SQL table)
+    if (dli.segmentName) {
+      const segId = generateId('Record', `<ims>:${dli.segmentName}`);
+      graph.addRelationship({
+        id: generateId('ACCESSES', `${dliId}->${dli.segmentName}:${dli.verb}`),
+        type: 'ACCESSES',
+        sourceId: dliId,
+        targetId: segId,
+        confidence: 0.9,
+        reason: `dli-${dli.verb.toLowerCase()}`,
+      });
+    }
+    // ACCESSES to INTO/FROM data areas
+    if (dli.intoField) {
+      const intoPropId = dataItemMap.get(dli.intoField.toUpperCase());
+      if (intoPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${dliId}->into->${dli.intoField}:L${dli.line}`),
+          type: 'ACCESSES',
+          sourceId: dliId,
+          targetId: intoPropId,
+          confidence: 0.9,
+          reason: 'dli-into',
+        });
+      }
+    }
+    if (dli.fromField) {
+      const fromPropId = dataItemMap.get(dli.fromField.toUpperCase());
+      if (fromPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${dliId}->from->${dli.fromField}:L${dli.line}`),
+          type: 'ACCESSES',
+          sourceId: dliId,
+          targetId: fromPropId,
+          confidence: 0.9,
+          reason: 'dli-from',
+        });
+      }
+    }
   }
 
   // ── MOVE data flow -> ACCESSES edges (read/write) ──────────────

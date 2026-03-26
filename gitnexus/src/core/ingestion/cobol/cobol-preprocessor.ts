@@ -116,6 +116,42 @@ export interface CobolRegexResults {
   sorts: Array<{ sortFile: string; usingFiles: string[]; givingFiles: string[]; line: number }>;
   searches: Array<{ target: string; line: number }>;
   cancels: Array<{ target: string; line: number; isQuoted: boolean }>;
+
+  // Phase 2.1: EXEC DLI (IMS/DB)
+  execDliBlocks: Array<{
+    line: number;
+    verb: string;
+    pcbNumber?: number;
+    segmentName?: string;
+    intoField?: string;
+    fromField?: string;
+    psbName?: string;
+  }>;
+
+  // Phase 2.2: DECLARATIVES
+  declaratives: Array<{
+    sectionName: string;
+    target: string; // file-name or INPUT/OUTPUT/I-O/EXTEND
+    line: number;
+  }>;
+
+  // Phase 2.3: SET statement
+  sets: Array<{
+    targets: string[];
+    form: 'to-true' | 'to-value' | 'up-by' | 'down-by';
+    value?: string;
+    line: number;
+    caller: string | null;
+  }>;
+
+  // Phase 2.4: INSPECT
+  inspects: Array<{
+    inspectedField: string;
+    counters: string[];
+    form: 'tallying' | 'replacing' | 'converting' | 'tallying-replacing';
+    line: number;
+    caller: string | null;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +288,18 @@ const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/g
 
 // Level 66 RENAMES
 const RE_66_LEVEL = /^\s*66\s+([A-Z][A-Z0-9-]+)\s+RENAMES\s+([A-Z][A-Z0-9-]+)/i;
+
+// DECLARATIVES boundary and USE AFTER EXCEPTION
+const RE_DECLARATIVES_START = /^\s*DECLARATIVES\s*\.\s*$/i;
+const RE_DECLARATIVES_END = /^\s*END\s+DECLARATIVES\s*\.\s*$/i;
+const RE_USE_AFTER = /\bUSE\s+(?:AFTER\s+)?(?:STANDARD\s+)?(?:EXCEPTION|ERROR)\s+ON\s+([A-Z][A-Z0-9-]+|INPUT|OUTPUT|I-O|EXTEND)\b/i;
+
+// SET statement (condition, index)
+const RE_SET_TO_TRUE = /\bSET\s+((?:[A-Z][A-Z0-9-]+(?:\s+OF\s+[A-Z][A-Z0-9-]+)?\s+)+)TO\s+TRUE\b/i;
+const RE_SET_INDEX = /\bSET\s+((?:[A-Z][A-Z0-9-]+\s+)+)(TO|UP\s+BY|DOWN\s+BY)\s+(\d+|[A-Z][A-Z0-9-]+)/i;
+
+// EXEC DLI (IMS/DB)
+const RE_EXEC_DLI_START = /\bEXEC\s+DLI\b/i;
 
 // PROCEDURE DIVISION USING
 const RE_PROC_USING = /\bPROCEDURE\s+DIVISION\s+USING\s+([\s\S]*?)(?:\.|$)/i;
@@ -662,6 +710,33 @@ function parseExecCicsBlock(block: string, line: number): CobolRegexResults['exe
 }
 
 // ---------------------------------------------------------------------------
+// Private helper: parse EXEC DLI block (IMS/DB)
+// ---------------------------------------------------------------------------
+
+function parseExecDliBlock(block: string, line: number): CobolRegexResults['execDliBlocks'][number] {
+  const body = block.replace(/\bEXEC\s+DLI\b/i, '').replace(/\bEND-EXEC\b/i, '').replace(/\s+/g, ' ').trim();
+  const verb = body.split(/\s+/)[0]?.toUpperCase() || '';
+  const result: CobolRegexResults['execDliBlocks'][number] = { line, verb };
+
+  const pcbMatch = body.match(/\bUSING\s+PCB\s*\(\s*(\d+)\s*\)/i);
+  if (pcbMatch) result.pcbNumber = parseInt(pcbMatch[1], 10);
+
+  const segMatch = body.match(/\bSEGMENT\s*\(\s*([A-Z][A-Z0-9-]*)\s*\)/i);
+  if (segMatch) result.segmentName = segMatch[1];
+
+  const intoMatch = body.match(/\bINTO\s*\(\s*([A-Z][A-Z0-9-]+)\s*\)/i);
+  if (intoMatch) result.intoField = intoMatch[1];
+
+  const fromMatch = body.match(/\bFROM\s*\(\s*([A-Z][A-Z0-9-]+)\s*\)/i);
+  if (fromMatch) result.fromField = fromMatch[1];
+
+  const psbMatch = body.match(/\bPSB\s*\(\s*([A-Z][A-Z0-9-]+)\s*\)/i);
+  if (psbMatch) result.psbName = psbMatch[1];
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Main extraction: single-pass state machine
 // ---------------------------------------------------------------------------
 
@@ -697,6 +772,10 @@ export function extractCobolSymbolsWithRegex(
     sorts: [],
     searches: [],
     cancels: [],
+    execDliBlocks: [],
+    declaratives: [],
+    sets: [],
+    inspects: [],
   };
 
   // --- State ---
@@ -719,8 +798,15 @@ export function extractCobolSymbolsWithRegex(
   let sortAccum: string | null = null;
   let sortStartLine = 0;
 
-  // EXEC block accumulator (multi-line EXEC SQL / EXEC CICS)
-  let execAccum: { type: 'sql' | 'cics'; lines: string; startLine: number } | null = null;
+  // EXEC block accumulator (multi-line EXEC SQL / EXEC CICS / EXEC DLI)
+  let execAccum: { type: 'sql' | 'cics' | 'dli'; lines: string; startLine: number } | null = null;
+
+  // DECLARATIVES state
+  let inDeclaratives = false;
+
+  // INSPECT accumulator (multi-line)
+  let inspectAccum: string | null = null;
+  let inspectStartLine = 0;
 
   // FD tracking: after seeing FD, the next 01-level data item is its record
   let pendingFdName: string | null = null;
@@ -838,12 +924,17 @@ export function extractCobolSymbolsWithRegex(
   // Flush any pending SORT/MERGE accumulator (truncated file without trailing period)
   flushSort();
 
+  // Flush any pending INSPECT accumulator (truncated file without trailing period)
+  flushInspect();
+
   // Flush any pending EXEC block (truncated file without END-EXEC)
   if (execAccum !== null) {
     if (execAccum.type === 'sql') {
       result.execSqlBlocks.push(parseExecSqlBlock(execAccum.lines, execAccum.startLine));
-    } else {
+    } else if (execAccum.type === 'cics') {
       result.execCicsBlocks.push(parseExecCicsBlock(execAccum.lines, execAccum.startLine));
+    } else if (execAccum.type === 'dli') {
+      result.execDliBlocks.push(parseExecDliBlock(execAccum.lines, execAccum.startLine));
     }
     execAccum = null;
   }
@@ -883,8 +974,10 @@ export function extractCobolSymbolsWithRegex(
       if (RE_END_EXEC.test(line)) {
         if (execAccum.type === 'sql') {
           result.execSqlBlocks.push(parseExecSqlBlock(execAccum.lines, execAccum.startLine));
-        } else {
+        } else if (execAccum.type === 'cics') {
           result.execCicsBlocks.push(parseExecCicsBlock(execAccum.lines, execAccum.startLine));
+        } else if (execAccum.type === 'dli') {
+          result.execDliBlocks.push(parseExecDliBlock(execAccum.lines, execAccum.startLine));
         }
         execAccum = null;
       }
@@ -909,6 +1002,14 @@ export function extractCobolSymbolsWithRegex(
       }
       return;
     }
+    if (RE_EXEC_DLI_START.test(line)) {
+      execAccum = { type: 'dli', lines: line, startLine: lineNum };
+      if (RE_END_EXEC.test(line)) {
+        result.execDliBlocks.push(parseExecDliBlock(execAccum.lines, execAccum.startLine));
+        execAccum = null;
+      }
+      return;
+    }
 
     // --- END PROGRAM boundary detection ---
     const endProgramMatch = line.match(RE_END_PROGRAM);
@@ -923,6 +1024,16 @@ export function extractCobolSymbolsWithRegex(
           procedureUsing: topProgram.procedureUsing,
         });
       }
+      return;
+    }
+
+    // DECLARATIVES boundary detection
+    if (RE_DECLARATIVES_START.test(line)) {
+      inDeclaratives = true;
+      return;
+    }
+    if (RE_DECLARATIVES_END.test(line)) {
+      inDeclaratives = false;
       return;
     }
 
@@ -1147,6 +1258,40 @@ export function extractCobolSymbolsWithRegex(
     sortAccum = null;
   }
 
+  function flushInspect(): void {
+    if (inspectAccum === null) return;
+    const text = inspectAccum;
+    const fieldMatch = text.match(/\bINSPECT\s+([A-Z][A-Z0-9-]+)/i);
+    if (!fieldMatch) { inspectAccum = null; return; }
+
+    const counters: string[] = [];
+    const tallySection = text.match(/\bTALLYING\b([\s\S]+?)(?:\bREPLACING\b|\bCONVERTING\b|\.\s*$)/i);
+    if (tallySection) {
+      const counterRe = /([A-Z][A-Z0-9-]+)\s+FOR\b/gi;
+      let cm: RegExpExecArray | null;
+      while ((cm = counterRe.exec(tallySection[1])) !== null) {
+        counters.push(cm[1]);
+      }
+    }
+
+    const hasTallying = /\bTALLYING\b/i.test(text);
+    const hasReplacing = /\bREPLACING\b/i.test(text);
+    const hasConverting = /\bCONVERTING\b/i.test(text);
+    const form = hasConverting ? 'converting' as const
+      : hasTallying && hasReplacing ? 'tallying-replacing' as const
+      : hasTallying ? 'tallying' as const
+      : 'replacing' as const;
+
+    result.inspects.push({
+      inspectedField: fieldMatch[1],
+      counters,
+      form,
+      line: inspectStartLine,
+      caller: currentParagraph,
+    });
+    inspectAccum = null;
+  }
+
   // =========================================================================
   // DATA DIVISION extraction
   // =========================================================================
@@ -1253,6 +1398,23 @@ export function extractCobolSymbolsWithRegex(
   // PROCEDURE DIVISION extraction
   // =========================================================================
   function extractProcedure(line: string, lineNum: number): void {
+    // USE AFTER EXCEPTION in DECLARATIVES
+    if (inDeclaratives) {
+      const useMatch = line.match(RE_USE_AFTER);
+      if (useMatch) {
+        // Find the most recent section name
+        const lastSection = result.sections[result.sections.length - 1];
+        if (lastSection) {
+          result.declaratives.push({
+            sectionName: lastSection.name,
+            target: useMatch[1],
+            line: lineNum,
+          });
+        }
+        return;
+      }
+    }
+
     // Handle PROCEDURE DIVISION USING on a continuation line
     if (pendingProcUsing) {
       const usingMatch = line.match(/\bUSING\s+([\s\S]*?)(?:\.|$)/i);
@@ -1376,6 +1538,23 @@ export function extractCobolSymbolsWithRegex(
       flushSort();
     }
 
+    // INSPECT — multi-line accumulator (like SORT)
+    if (inspectAccum !== null) {
+      inspectAccum += ' ' + line;
+      if (/\.\s*$/.test(inspectAccum)) {
+        flushInspect();
+      } else {
+        return;
+      }
+    }
+    const inspectMatch = line.match(/\bINSPECT\s+([A-Z][A-Z0-9-]+)/i);
+    if (inspectMatch && inspectAccum === null) {
+      inspectAccum = line;
+      inspectStartLine = lineNum;
+      if (!/\.\s*$/.test(inspectAccum)) return;
+      flushInspect();
+    }
+
     // SEARCH — table access
     const searchMatch = line.match(RE_SEARCH);
     if (searchMatch) {
@@ -1391,6 +1570,27 @@ export function extractCobolSymbolsWithRegex(
     for (const dynCancelMatch of line.matchAll(RE_CANCEL_DYNAMIC)) {
       if (!hasQuotedCancel || !line.substring(0, dynCancelMatch.index!).includes('CANCEL')) {
         result.cancels.push({ target: dynCancelMatch[1], line: lineNum, isQuoted: false });
+      }
+    }
+
+    // SET statement (condition, index)
+    const setTrueMatch = line.match(RE_SET_TO_TRUE);
+    if (setTrueMatch) {
+      const targets = setTrueMatch[1].trim().split(/\s+/)
+        .filter(t => /^[A-Z][A-Z0-9-]+$/i.test(t) && t.toUpperCase() !== 'OF');
+      if (targets.length > 0) {
+        result.sets.push({ targets, form: 'to-true', line: lineNum, caller: currentParagraph });
+      }
+    } else {
+      const setIdxMatch = line.match(RE_SET_INDEX);
+      if (setIdxMatch) {
+        const targets = setIdxMatch[1].trim().split(/\s+/)
+          .filter(t => /^[A-Z][A-Z0-9-]+$/i.test(t));
+        const mode = setIdxMatch[2].toUpperCase();
+        const form = mode === 'TO' ? 'to-value' as const
+          : mode.startsWith('UP') ? 'up-by' as const
+          : 'down-by' as const;
+        result.sets.push({ targets, form, value: setIdxMatch[3], line: lineNum, caller: currentParagraph });
       }
     }
   }
