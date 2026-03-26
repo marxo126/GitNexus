@@ -292,7 +292,7 @@ const PERFORM_KEYWORD_SKIP = new Set([
 const SORT_CLAUSE_NOISE = new Set([
   'ON', 'ASCENDING', 'DESCENDING', 'KEY', 'WITH', 'DUPLICATES',
   'IN', 'ORDER', 'COLLATING', 'SEQUENCE', 'IS', 'THROUGH', 'THRU',
-  'INPUT', 'OUTPUT', 'PROCEDURE',
+  'INPUT', 'OUTPUT', 'PROCEDURE', 'USING', 'GIVING',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -903,7 +903,8 @@ export function extractCobolSymbolsWithRegex(
             pendingProcUsing = false;
           } else {
             // USING may be on the next line — flag for extractProcedure to pick up
-            pendingProcUsing = true;
+            // Only set if the line is NOT period-terminated (period = no USING clause)
+            pendingProcUsing = !/\.\s*$/.test(line);
           }
           break;
         }
@@ -1056,13 +1057,14 @@ export function extractCobolSymbolsWithRegex(
         givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f) && !SORT_CLAUSE_NOISE.has(f.toUpperCase())));
       }
       // INPUT PROCEDURE IS / OUTPUT PROCEDURE IS → control-flow targets (like PERFORM)
-      const inputProcMatch = fullSort.match(/\bINPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/i);
-      const outputProcMatch = fullSort.match(/\bOUTPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/i);
+      // Supports optional THRU/THROUGH range: INPUT PROCEDURE IS proc-start THRU proc-end
+      const inputProcMatch = fullSort.match(/\bINPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/i);
+      const outputProcMatch = fullSort.match(/\bOUTPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/i);
       if (inputProcMatch) {
-        result.performs.push({ caller: currentParagraph, target: inputProcMatch[1], line: sortStartLine });
+        result.performs.push({ caller: currentParagraph, target: inputProcMatch[1], thruTarget: inputProcMatch[2] || undefined, line: sortStartLine });
       }
       if (outputProcMatch) {
-        result.performs.push({ caller: currentParagraph, target: outputProcMatch[1], line: sortStartLine });
+        result.performs.push({ caller: currentParagraph, target: outputProcMatch[1], thruTarget: outputProcMatch[2] || undefined, line: sortStartLine });
       }
       result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
     }
