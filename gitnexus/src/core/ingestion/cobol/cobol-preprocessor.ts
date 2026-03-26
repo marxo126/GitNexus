@@ -832,6 +832,10 @@ export function extractCobolSymbolsWithRegex(
   let inspectAccum: string | null = null;
   let inspectStartLine = 0;
 
+  // CALL accumulator (multi-line CALL ... USING on separate lines)
+  let callAccum: string | null = null;
+  let callAccumLine = 0;
+
   // FD tracking: after seeing FD, the next 01-level data item is its record
   let pendingFdName: string | null = null;
   let pendingFdLine = 0;
@@ -950,6 +954,9 @@ export function extractCobolSymbolsWithRegex(
 
   // Flush any pending INSPECT accumulator (truncated file without trailing period)
   flushInspect();
+
+  // Flush any pending CALL accumulator (truncated file without trailing period)
+  flushCallAccum();
 
   // Flush any pending EXEC block (truncated file without END-EXEC)
   if (execAccum !== null) {
@@ -1137,31 +1144,25 @@ export function extractCobolSymbolsWithRegex(
     }
 
     // --- CALL (all divisions, typically procedure) ---
-    // Global matchAll captures multiple CALLs on same line (e.g. CALL 'A' ON EXCEPTION CALL 'B')
-    for (const callMatch of line.matchAll(RE_CALL)) {
-      const callTarget = callMatch[1] ?? callMatch[2];
-      const afterCall = line.substring(callMatch.index! + callMatch[0].length);
-      const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
-      const parameters = usingMatch
-        ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
-            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
-        : undefined;
-      const retMatch = afterCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
-      const returning = retMatch ? retMatch[1] : undefined;
-      result.calls.push({ target: callTarget, line: lineNum, isQuoted: true, parameters, returning });
-    }
-    // Dynamic CALL (no quotes) — RE_CALL_DYNAMIC cannot match quoted targets (requires [A-Z] start),
-    // so no deduplication guard is needed against quoted matches
-    for (const dynCallMatch of line.matchAll(RE_CALL_DYNAMIC)) {
-      const afterDynCall = line.substring(dynCallMatch.index! + dynCallMatch[0].length);
-      const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
-      const dynParameters = dynUsingMatch
-        ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
-            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
-        : undefined;
-      const dynRetMatch = afterDynCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
-      const dynReturning = dynRetMatch ? dynRetMatch[1] : undefined;
-      result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters, returning: dynReturning });
+    // Multi-line CALL accumulator: accumulate CALL statement until period or END-CALL
+    if (callAccum !== null) {
+      callAccum += ' ' + line;
+      if (/\.\s*$/.test(callAccum) || /\bEND-CALL\b/i.test(callAccum)) {
+        flushCallAccum();
+      }
+      // Don't return — line may contain other extractable constructs after the period
+    } else if (/\bCALL\s+(?:"[^"]+"|'[^']+'|[A-Z][A-Z0-9-]+)/i.test(line)) {
+      // Check if this is a complete single-line CALL (ends with period or END-CALL)
+      if (/\.\s*$/.test(line) || /\bEND-CALL\b/i.test(line)) {
+        // Single-line CALL — extract immediately via flushCallAccum
+        callAccum = line;
+        callAccumLine = lineNum;
+        flushCallAccum();
+      } else {
+        // Multi-line CALL — start accumulating
+        callAccum = line;
+        callAccumLine = lineNum;
+      }
     }
 
     // --- Division-specific extraction ---
@@ -1328,6 +1329,44 @@ export function extractCobolSymbolsWithRegex(
       caller: currentParagraph,
     });
     inspectAccum = null;
+  }
+
+  /**
+   * Flush accumulated multi-line CALL statement. Re-extracts CALL target
+   * and USING parameters from the full accumulated text.
+   */
+  function flushCallAccum(): void {
+    if (callAccum === null) return;
+    const text = callAccum;
+
+    // Extract quoted CALLs from the full statement
+    for (const callMatch of text.matchAll(RE_CALL)) {
+      const callTarget = callMatch[1] ?? callMatch[2];
+      const afterCall = text.substring(callMatch.index! + callMatch[0].length);
+      const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const parameters = usingMatch
+        ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
+            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
+        : undefined;
+      const retMatch = afterCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
+      const returning = retMatch ? retMatch[1] : undefined;
+      result.calls.push({ target: callTarget, line: callAccumLine, isQuoted: true, parameters, returning });
+    }
+
+    // Extract dynamic CALLs from the full statement
+    for (const dynCallMatch of text.matchAll(RE_CALL_DYNAMIC)) {
+      const afterDynCall = text.substring(dynCallMatch.index! + dynCallMatch[0].length);
+      const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const dynParameters = dynUsingMatch
+        ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
+            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
+        : undefined;
+      const dynRetMatch = afterDynCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
+      const dynReturning = dynRetMatch ? dynRetMatch[1] : undefined;
+      result.calls.push({ target: dynCallMatch[1], line: callAccumLine, isQuoted: false, parameters: dynParameters, returning: dynReturning });
+    }
+
+    callAccum = null;
   }
 
   // =========================================================================
@@ -1566,15 +1605,15 @@ export function extractCobolSymbolsWithRegex(
       // Continue accumulating SORT/MERGE statement
       sortAccum += ' ' + line;
       if (!/\.\s*$/.test(sortAccum)) return; // still accumulating — skip other extractors
+      // Period found — flush, then re-check line for a new SORT/MERGE after the period
+      flushSort();
+      // After flushing, fall through to check if this line also starts a new SORT/MERGE
     }
     const sortMatch = line.match(RE_SORT) || line.match(RE_MERGE);
     if (sortMatch && sortAccum === null) {
       sortAccum = line;
       sortStartLine = lineNum;
       if (!/\.\s*$/.test(sortAccum)) return; // multi-line — wait for period
-    }
-    // Flush when accumulated statement ends with period
-    if (sortAccum !== null && /\.\s*$/.test(sortAccum)) {
       flushSort();
     }
 
