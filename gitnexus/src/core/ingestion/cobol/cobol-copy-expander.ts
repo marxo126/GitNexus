@@ -406,7 +406,7 @@ export function expandCopies(
     depth: number,
     visited: Set<string>,
   ): string {
-    const rawLines = src.split('\n');
+    const rawLines = src.split(/\r?\n/);
     const logicalLines = mergeLogicalLines(rawLines);
     const copyStatements = parseCopyStatements(logicalLines);
 

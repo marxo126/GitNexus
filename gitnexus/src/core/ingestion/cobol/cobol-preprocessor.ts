@@ -188,7 +188,7 @@ export function preprocessCobolSource(content: string): string {
     return content;
   }
 
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line.length < 7) continue;
@@ -772,7 +772,7 @@ export function extractCobolSymbolsWithRegex(
   content: string,
   _filePath: string,
 ): CobolRegexResults {
-  const rawLines = content.split('\n');
+  const rawLines = content.split(/\r?\n/);
 
   const result: CobolRegexResults = {
     programName: null,

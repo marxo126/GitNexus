@@ -303,7 +303,7 @@ function mapToGraph(
   moduleNodeIds: Map<string, string>,
 ): void {
   const { path: filePath, content } = file;
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const fileNodeId = generateId('File', filePath);
 
   // ── PROGRAM-ID -> Module node ────────────────────────────────────

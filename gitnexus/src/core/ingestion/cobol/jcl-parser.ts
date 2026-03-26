@@ -115,7 +115,7 @@ export function parseJcl(content: string, filePath: string): JclParseResults {
     conditionals: [],
   };
 
-  const rawLines = content.split('\n');
+  const rawLines = content.split(/\r?\n/);
   // Join continuation lines: a line ending with non-blank in col 71 (0-indexed)
   // followed by a line starting with // is a continuation.
   const lines: Array<{ text: string; lineNum: number }> = [];
