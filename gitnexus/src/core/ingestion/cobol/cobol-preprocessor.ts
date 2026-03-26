@@ -273,7 +273,7 @@ const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z]
 // Use separate alternation groups so quotes must match (prevents "PROG' false-matches).
 const RE_CALL = /\bCALL\s+(?:"([^"]+)"|'([^']+)')/gi;
 // Dynamic CALL via data item (no quotes): CALL WS-PROGRAM-NAME
-const RE_CALL_DYNAMIC = /(?<![A-Z0-9-])\bCALL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/gi;
+const RE_CALL_DYNAMIC = /(?<![A-Z0-9-])\bCALL\s+([A-Z][A-Z0-9-]+)(?=\s|\.|$)/gi;
 const RE_COPY_UNQUOTED = /\bCOPY\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/i;
 const RE_COPY_QUOTED = /\bCOPY\s+(?:"([^"]+)"|'([^']+)')(?:\s|\.)/i;
 
@@ -295,7 +295,7 @@ const RE_SEARCH = /\bSEARCH\s+(?:ALL\s+)?([A-Z][A-Z0-9-]+)/i;
 
 // CANCEL — program lifecycle
 const RE_CANCEL = /\bCANCEL\s+(?:"([^"]+)"|'([^']+)')/gi;
-const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?:\s|\.)/gi;
+const RE_CANCEL_DYNAMIC = /(?<![A-Z0-9-])\bCANCEL\s+([A-Z][A-Z0-9-]+)(?=\s|\.|$)/gi;
 
 // Level 66 RENAMES
 const RE_66_LEVEL = /^\s*66\s+([A-Z][A-Z0-9-]+)\s+RENAMES\s+([A-Z][A-Z0-9-]+)/i;
@@ -1138,38 +1138,30 @@ export function extractCobolSymbolsWithRegex(
 
     // --- CALL (all divisions, typically procedure) ---
     // Global matchAll captures multiple CALLs on same line (e.g. CALL 'A' ON EXCEPTION CALL 'B')
-    let hasQuotedCall = false;
     for (const callMatch of line.matchAll(RE_CALL)) {
       const callTarget = callMatch[1] ?? callMatch[2];
-      // Extract USING parameters from the text after the CALL target
       const afterCall = line.substring(callMatch.index! + callMatch[0].length);
       const usingMatch = afterCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
       const parameters = usingMatch
         ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
             .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
         : undefined;
-      // Also capture RETURNING target
       const retMatch = afterCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
       const returning = retMatch ? retMatch[1] : undefined;
       result.calls.push({ target: callTarget, line: lineNum, isQuoted: true, parameters, returning });
-      hasQuotedCall = true;
     }
-    // Also check for dynamic CALL (no quotes) — checked separately, not in else branch
+    // Dynamic CALL (no quotes) — RE_CALL_DYNAMIC cannot match quoted targets (requires [A-Z] start),
+    // so no deduplication guard is needed against quoted matches
     for (const dynCallMatch of line.matchAll(RE_CALL_DYNAMIC)) {
-      // Skip if this dynamic CALL overlaps with a quoted CALL already captured
-      if (!hasQuotedCall || !line.substring(0, dynCallMatch.index!).includes('CALL')) {
-        // Extract USING parameters from the text after the dynamic CALL target
-        const afterDynCall = line.substring(dynCallMatch.index! + dynCallMatch[0].length);
-        const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
-        const dynParameters = dynUsingMatch
-          ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
-              .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
-          : undefined;
-        // Also capture RETURNING target for dynamic calls
-        const dynRetMatch = afterDynCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
-        const dynReturning = dynRetMatch ? dynRetMatch[1] : undefined;
-        result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters, returning: dynReturning });
-      }
+      const afterDynCall = line.substring(dynCallMatch.index! + dynCallMatch[0].length);
+      const dynUsingMatch = afterDynCall.match(/\bUSING\s+([\s\S]*?)(?=\bRETURNING\b|\bON\s+(?:EXCEPTION|OVERFLOW)\b|\bNOT\s+ON\b|\bEND-CALL\b|\.\s*$|$)/i);
+      const dynParameters = dynUsingMatch
+        ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
+            .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
+        : undefined;
+      const dynRetMatch = afterDynCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
+      const dynReturning = dynRetMatch ? dynRetMatch[1] : undefined;
+      result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters, returning: dynReturning });
     }
 
     // --- Division-specific extraction ---
@@ -1610,15 +1602,12 @@ export function extractCobolSymbolsWithRegex(
     }
 
     // CANCEL — program lifecycle (global matchAll captures multiple CANCELs on same line)
-    let hasQuotedCancel = false;
     for (const cancelMatch of line.matchAll(RE_CANCEL)) {
       result.cancels.push({ target: cancelMatch[1] ?? cancelMatch[2], line: lineNum, isQuoted: true });
-      hasQuotedCancel = true;
     }
+    // Dynamic CANCEL — RE_CANCEL_DYNAMIC cannot match quoted targets, no dedup guard needed
     for (const dynCancelMatch of line.matchAll(RE_CANCEL_DYNAMIC)) {
-      if (!hasQuotedCancel || !line.substring(0, dynCancelMatch.index!).includes('CANCEL')) {
-        result.cancels.push({ target: dynCancelMatch[1], line: lineNum, isQuoted: false });
-      }
+      result.cancels.push({ target: dynCancelMatch[1], line: lineNum, isQuoted: false });
     }
 
     // SET statement (condition, index)
