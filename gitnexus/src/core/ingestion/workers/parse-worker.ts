@@ -1405,6 +1405,80 @@ export function extractWebhooks(filePath: string, content: string, out: Extracte
   }
 }
 
+/**
+ * Extract message-queue producer/consumer patterns from source code.
+ * Detects: BullMQ, RabbitMQ (amqplib), Kafka (kafkajs), AWS SQS, Celery.
+ */
+export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+
+  const lineAt = (offset: number): number => {
+    let n = 0;
+    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    return n;
+  };
+
+  // BullMQ — new Queue('name') = producer, Worker('name', ...) / process('name', ...) = consumer
+  const bullQueueRe = /new\s+Queue\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  let m;
+  while ((m = bullQueueRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'Queue', lineNumber: lineAt(m.index) });
+  }
+  const bullWorkerRe = /new\s+Worker\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = bullWorkerRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'Worker', lineNumber: lineAt(m.index) });
+  }
+  const bullProcessRe = /\.process\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = bullProcessRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'process', lineNumber: lineAt(m.index) });
+  }
+
+  // RabbitMQ (amqplib) — sendToQueue / publish = producer, consume / assertQueue + consume = consumer
+  const amqpSendRe = /\.sendToQueue\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendToQueue', lineNumber: lineAt(m.index) });
+  }
+  const amqpPublishRe = /\.publish\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpPublishRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: `${m[1]}/${m[2]}`, method: 'publish', lineNumber: lineAt(m.index) });
+  }
+  const amqpConsumeRe = /\.consume\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = amqpConsumeRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'consume', lineNumber: lineAt(m.index) });
+  }
+
+  // Kafka (kafkajs) — producer.send({topic: '...'}) = producer, consumer.subscribe({topic: '...'}) = consumer
+  const kafkaSendRe = /\.send\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = kafkaSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'send', lineNumber: lineAt(m.index) });
+  }
+  const kafkaSubRe = /\.subscribe\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = kafkaSubRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'subscribe', lineNumber: lineAt(m.index) });
+  }
+
+  // AWS SQS — sendMessage/sendMessageBatch with QueueUrl = producer, receiveMessage = consumer
+  const sqsSendRe = /sendMessage(?:Batch)?\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = sqsSendRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendMessage', lineNumber: lineAt(m.index) });
+  }
+  const sqsRecvRe = /receiveMessage\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
+  while ((m = sqsRecvRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'receiveMessage', lineNumber: lineAt(m.index) });
+  }
+
+  // Celery (Python) — @app.task / .delay() / .apply_async()
+  const celeryTaskRe = /@(?:app|celery)\.task[^]*?def\s+(\w+)/g;
+  while ((m = celeryTaskRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'task', handlerName: m[1], lineNumber: lineAt(m.index) });
+  }
+  const celeryCallRe = /(\w+)\.(delay|apply_async)\s*\(/g;
+  while ((m = celeryCallRe.exec(content)) !== null) {
+    out.push({ filePath, role: 'producer', queueName: m[1], method: m[2], lineNumber: lineAt(m.index) });
+  }
+}
+
 const processFileGroup = (
   files: ParseWorkerInput[],
   language: SupportedLanguages,
