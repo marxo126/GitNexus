@@ -145,7 +145,6 @@ export function parseJcl(content: string, filePath: string): JclParseResults {
 
   let currentJobName = '';
   let currentStepName = '';
-  let inInStreamProc = false;
   let inStreamProcName = '';
 
   for (const { text, lineNum } of lines) {
@@ -161,14 +160,12 @@ export function parseJcl(content: string, filePath: string): JclParseResults {
       if (procName) {
         results.procs.push({ name: procName.toUpperCase(), line: lineNum, isInStream: true });
       }
-      inInStreamProc = true;
       inStreamProcName = procName?.toUpperCase() || '';
       continue;
     }
 
     // PEND (end of in-stream proc)
     if (PEND_RE.test(text)) {
-      inInStreamProc = false;
       inStreamProcName = '';
       continue;
     }

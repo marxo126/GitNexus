@@ -194,7 +194,7 @@ const RE_AUTHOR = /^\s+AUTHOR\.\s*(.+)/i;
 const RE_DATE_WRITTEN = /^\s+DATE-WRITTEN\.\s*(.+)/i;
 
 // ENVIRONMENT DIVISION — SELECT
-const RE_SELECT_START = /\bSELECT\s+([A-Z][A-Z0-9-]+)/i;
+const RE_SELECT_START = /\bSELECT\s+(?:OPTIONAL\s+)?([A-Z][A-Z0-9-]+)/i;
 
 // DATA DIVISION
 // ^\s* (not ^\s+) to support both fixed-format (indented) and free-format (trimmed)
@@ -207,7 +207,7 @@ const RE_88_LEVEL = /^\s*88\s+([A-Z][A-Z0-9-]+)\s+VALUES?\s+(?:ARE\s+)?(.+)/i;
 // These patterns support both fixed-format (7 leading spaces) and free-format (any indentation)
 const RE_PROC_SECTION = /^\s*([A-Z][A-Z0-9-]+)\s+SECTION(?:\s+\d+)?\.\s*$/i;
 const RE_PROC_PARAGRAPH = /^\s*([A-Z][A-Z0-9-]+)\.\s*$/i;
-const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/i;
+const RE_PERFORM = /\bPERFORM\s+([A-Z][A-Z0-9-]+)(?:\s+(?:THRU|THROUGH)\s+([A-Z][A-Z0-9-]+))?/gi;
 
 // ALL DIVISIONS
 // Both double-quoted ("PROG") and single-quoted ('PROG') targets are valid COBOL.
@@ -224,7 +224,8 @@ const RE_EXEC_CICS_START = /\bEXEC\s+CICS\b/i;
 const RE_END_EXEC = /\bEND-EXEC\b/i;
 
 // GO TO — control flow transfer (same graph semantics as PERFORM)
-const RE_GOTO = /\bGO\s+TO\s+([A-Z][A-Z0-9-]+)/i;
+// GO TO — captures first target; GO TO p1 p2 p3 DEPENDING ON x handled below
+const RE_GOTO = /\bGO\s+TO\s+([A-Z][A-Z0-9-]+(?:\s+[A-Z][A-Z0-9-]+)*?)(?:\s+DEPENDING\s+ON\s+[A-Z][A-Z0-9-]+)?(?:\s*\.|$)/i;
 
 // SORT/MERGE file references
 const RE_SORT = /\bSORT\s+([A-Z][A-Z0-9-]+)/i;
@@ -247,7 +248,7 @@ const RE_PROC_USING = /\bPROCEDURE\s+DIVISION\s+USING\s+([\s\S]*?)(?:\.|$)/i;
 const RE_ENTRY = /\bENTRY\s+(?:"([^"]+)"|'([^']+)')(?:\s+USING\s+([\s\S]*?))?(?:\.|$)/i;
 
 // MOVE statement — captures everything after TO for multi-target extraction
-const RE_MOVE = /\bMOVE\s+(CORRESPONDING\s+)?([A-Z][A-Z0-9-]+)\s+TO\s+(.+)/i;
+const RE_MOVE = /\bMOVE\s+((?:CORRESPONDING|CORR)\s+)?([A-Z][A-Z0-9-]+)\s+TO\s+(.+)/i;
 const MOVE_SKIP = new Set([
   'SPACES', 'ZEROS', 'ZEROES', 'LOW-VALUES', 'LOW-VALUE',
   'HIGH-VALUES', 'HIGH-VALUE', 'QUOTES', 'QUOTE', 'ALL',
@@ -287,13 +288,30 @@ const PERFORM_KEYWORD_SKIP = new Set([
   'UNTIL', 'VARYING', 'WITH', 'TEST', 'FOREVER',
 ]);
 
+// SORT/MERGE clause keywords that should not be captured as file names
+const SORT_CLAUSE_NOISE = new Set([
+  'ON', 'ASCENDING', 'DESCENDING', 'KEY', 'WITH', 'DUPLICATES',
+  'IN', 'ORDER', 'COLLATING', 'SEQUENCE', 'IS', 'THROUGH', 'THRU',
+  'INPUT', 'OUTPUT', 'PROCEDURE',
+]);
+
 // ---------------------------------------------------------------------------
 // Private helper: strip Italian inline comments (| and everything after)
 // ---------------------------------------------------------------------------
 
 function stripInlineComment(line: string): string {
-  const idx = line.indexOf('|');
-  return idx >= 0 ? line.substring(0, idx) : line;
+  let inQuote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (ch === inQuote) inQuote = null;
+    } else if (ch === '"' || ch === "'") {
+      inQuote = ch;
+    } else if (ch === '|') {
+      return line.substring(0, i);
+    }
+  }
+  return line;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +425,7 @@ function parseSelectStatement(stmt: string, startLine: number): FileDeclaration 
   // Normalize whitespace
   const text = stmt.replace(/\s+/g, ' ').trim();
 
-  const nameMatch = text.match(/^SELECT\s+([A-Z][A-Z0-9-]+)/i);
+  const nameMatch = text.match(/^SELECT\s+(?:OPTIONAL\s+)?([A-Z][A-Z0-9-]+)/i);
   if (!nameMatch) return null;
 
   const result: FileDeclaration = {
@@ -471,7 +489,7 @@ function parseExecSqlBlock(block: string, line: number): CobolRegexResults['exec
   const tables: string[] = [];
   const tablePatterns = [
     /\bFROM\s+([A-Z][A-Z0-9_]+)/gi,
-    /\bINTO\s+([A-Z][A-Z0-9_]+)/gi,
+    /\bINSERT\s+INTO\s+([A-Z][A-Z0-9_]+)/gi,
     /\bUPDATE\s+([A-Z][A-Z0-9_]+)/gi,
     /\bJOIN\s+([A-Z][A-Z0-9_]+)/gi,
   ];
@@ -675,8 +693,20 @@ export function extractCobolSymbolsWithRegex(
       // Skip free-format comment lines (*> at start of content)
       const trimmed = raw.trimStart();
       if (trimmed.startsWith('*>') || trimmed.length === 0) continue;
-      // Strip inline *> comments
-      const commentIdx = raw.indexOf('*>');
+      // Strip inline *> comments (quote-aware)
+      let commentIdx = -1;
+      let ffInQuote: string | null = null;
+      for (let ci = 0; ci < raw.length - 1; ci++) {
+        const c = raw[ci];
+        if (ffInQuote) {
+          if (c === ffInQuote) ffInQuote = null;
+        } else if (c === '"' || c === "'") {
+          ffInQuote = c;
+        } else if (c === '*' && raw[ci + 1] === '>') {
+          commentIdx = ci;
+          break;
+        }
+      }
       const line = commentIdx >= 0 ? raw.substring(0, commentIdx) : raw;
       // Free-format lines are logical lines (no continuation indicator)
       const lineNum = i + 1;
@@ -706,9 +736,20 @@ export function extractCobolSymbolsWithRegex(
     // Continuation line: indicator is '-'
     if (indicator === '-') {
       if (pendingLine !== null) {
-        // Append continuation (area B content, trimmed leading spaces)
         const continuation = raw.substring(7).trimStart();
-        pendingLine += continuation;
+        // Handle literal continuation: if continuation starts with a quote,
+        // remove the trailing quote from the predecessor and skip the opening quote
+        if (continuation.length > 0 && (continuation[0] === '"' || continuation[0] === "'")) {
+          const quoteChar = continuation[0];
+          const lastQuoteIdx = pendingLine.lastIndexOf(quoteChar);
+          if (lastQuoteIdx >= 0) {
+            pendingLine = pendingLine.substring(0, lastQuoteIdx) + continuation.substring(1);
+          } else {
+            pendingLine += continuation;
+          }
+        } else {
+          pendingLine += continuation;
+        }
       }
       continue;
     }
@@ -737,27 +778,16 @@ export function extractCobolSymbolsWithRegex(
   flushSelect();
 
   // Flush any pending SORT/MERGE accumulator (truncated file without trailing period)
-  if (sortAccum !== null) {
-    const smatch = sortAccum.match(RE_SORT) || sortAccum.match(RE_MERGE);
-    if (smatch) {
-      const upper = sortAccum.toUpperCase();
-      const usingIdx = upper.search(/\bUSING\s/);
-      const givingIdx = upper.search(/\bGIVING\s/);
-      const usingFiles: string[] = [];
-      const givingFiles: string[] = [];
-      if (usingIdx >= 0) {
-        const afterUsing = sortAccum.substring(usingIdx + 6);
-        const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
-        const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
-        usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
-      }
-      if (givingIdx >= 0) {
-        const givingText = sortAccum.substring(givingIdx + 7);
-        givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
-      }
-      result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
+  flushSort();
+
+  // Flush any pending EXEC block (truncated file without END-EXEC)
+  if (execAccum !== null) {
+    if (execAccum.type === 'sql') {
+      result.execSqlBlocks.push(parseExecSqlBlock(execAccum.lines, execAccum.startLine));
+    } else {
+      result.execCicsBlocks.push(parseExecCicsBlock(execAccum.lines, execAccum.startLine));
     }
-    sortAccum = null;
+    execAccum = null;
   }
 
   // If we saw an FD but never found its record, emit it without a record name
@@ -838,6 +868,16 @@ export function extractCobolSymbolsWithRegex(
       return;
     }
 
+    // Detect PROGRAM-ID regardless of current division state (handles sibling
+    // programs after END PROGRAM where IDENTIFICATION DIVISION header is omitted)
+    if (currentDivision !== 'identification') {
+      const pgmIdMatch = line.match(RE_PROGRAM_ID);
+      if (pgmIdMatch) {
+        extractIdentification(line, lineNum);
+        return;
+      }
+    }
+
     // --- Division transitions ---
     const divMatch = line.match(RE_DIVISION);
     if (divMatch) {
@@ -854,7 +894,7 @@ export function extractCobolSymbolsWithRegex(
           currentParagraph = null;
           const procUsingMatch = line.match(RE_PROC_USING);
           if (procUsingMatch) {
-            const params = procUsingMatch[1].trim().split(/\s+/)
+            const params = procUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
               .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
             result.procedureUsing = params;
             // Store per-program on the boundary stack
@@ -995,6 +1035,40 @@ export function extractCobolSymbolsWithRegex(
     selectAccum = null;
   }
 
+  function flushSort(): void {
+    if (sortAccum === null) return;
+    const fullSort = sortAccum;
+    const smatch = fullSort.match(RE_SORT) || fullSort.match(RE_MERGE);
+    if (smatch) {
+      const upper = fullSort.toUpperCase();
+      const usingIdx = upper.search(/\bUSING\s/);
+      const givingIdx = upper.search(/\bGIVING\s/);
+      const usingFiles: string[] = [];
+      const givingFiles: string[] = [];
+      if (usingIdx >= 0) {
+        const afterUsing = fullSort.substring(usingIdx + 6);
+        const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
+        const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
+        usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f) && !SORT_CLAUSE_NOISE.has(f.toUpperCase())));
+      }
+      if (givingIdx >= 0) {
+        const givingText = fullSort.substring(givingIdx + 7);
+        givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f) && !SORT_CLAUSE_NOISE.has(f.toUpperCase())));
+      }
+      // INPUT PROCEDURE IS / OUTPUT PROCEDURE IS → control-flow targets (like PERFORM)
+      const inputProcMatch = fullSort.match(/\bINPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/i);
+      const outputProcMatch = fullSort.match(/\bOUTPUT\s+PROCEDURE\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/i);
+      if (inputProcMatch) {
+        result.performs.push({ caller: currentParagraph, target: inputProcMatch[1], line: sortStartLine });
+      }
+      if (outputProcMatch) {
+        result.performs.push({ caller: currentParagraph, target: outputProcMatch[1], line: sortStartLine });
+      }
+      result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
+    }
+    sortAccum = null;
+  }
+
   // =========================================================================
   // DATA DIVISION extraction
   // =========================================================================
@@ -1103,7 +1177,7 @@ export function extractCobolSymbolsWithRegex(
     if (pendingProcUsing) {
       const usingMatch = line.match(/\bUSING\s+([\s\S]*?)(?:\.|$)/i);
       if (usingMatch) {
-        const params = usingMatch[1].trim().split(/\s+/)
+        const params = usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
           .filter(s => s.length > 0 && !USING_KEYWORDS.has(s.toUpperCase()));
         result.procedureUsing = params;
         const topProg = programBoundaryStack[programBoundaryStack.length - 1];
@@ -1137,9 +1211,8 @@ export function extractCobolSymbolsWithRegex(
       return;
     }
 
-    // PERFORM
-    const perfMatch = line.match(RE_PERFORM);
-    if (perfMatch) {
+    // PERFORM (global — captures multiple PERFORMs on the same logical line)
+    for (const perfMatch of line.matchAll(RE_PERFORM)) {
       const target = perfMatch[1];
       // Skip COBOL inline-perform keywords that are not paragraph names
       if (!PERFORM_KEYWORD_SKIP.has(target.toUpperCase())) {
@@ -1197,10 +1270,13 @@ export function extractCobolSymbolsWithRegex(
       }
     }
 
-    // GO TO — control flow transfer
+    // GO TO — control flow transfer (handles GO TO p1 p2 p3 DEPENDING ON x)
     const gotoMatch = line.match(RE_GOTO);
     if (gotoMatch) {
-      result.gotos.push({ caller: currentParagraph, target: gotoMatch[1], line: lineNum });
+      const targets = gotoMatch[1].trim().split(/\s+/).filter(t => /^[A-Z][A-Z0-9-]+$/i.test(t));
+      for (const target of targets) {
+        result.gotos.push({ caller: currentParagraph, target, line: lineNum });
+      }
     }
 
     // SORT / MERGE file references (multi-line: accumulate until period)
@@ -1217,27 +1293,7 @@ export function extractCobolSymbolsWithRegex(
     }
     // Flush when accumulated statement ends with period
     if (sortAccum !== null && /\.\s*$/.test(sortAccum)) {
-      const fullSort = sortAccum;
-      const smatch = fullSort.match(RE_SORT) || fullSort.match(RE_MERGE);
-      if (smatch) {
-        const upper = fullSort.toUpperCase();
-        const usingIdx = upper.search(/\bUSING\s/);
-        const givingIdx = upper.search(/\bGIVING\s/);
-        const usingFiles: string[] = [];
-        const givingFiles: string[] = [];
-        if (usingIdx >= 0) {
-          const afterUsing = fullSort.substring(usingIdx + 6);
-          const gIdx = afterUsing.toUpperCase().search(/\bGIVING\b/);
-          const usingText = gIdx >= 0 ? afterUsing.substring(0, gIdx) : afterUsing;
-          usingFiles.push(...usingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
-        }
-        if (givingIdx >= 0) {
-          const givingText = fullSort.substring(givingIdx + 7);
-          givingFiles.push(...givingText.trim().split(/\s+/).map(f => f.replace(/\.$/, '')).filter(f => /^[A-Z][A-Z0-9-]+$/i.test(f)));
-        }
-        result.sorts.push({ sortFile: smatch[1], usingFiles, givingFiles, line: sortStartLine });
-      }
-      sortAccum = null;
+      flushSort();
     }
 
     // SEARCH — table access

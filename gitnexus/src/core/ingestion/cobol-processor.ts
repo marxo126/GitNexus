@@ -381,10 +381,11 @@ function mapToGraph(
         isExported: true,
       },
     });
+    const secParent = programModuleIds.get(owningPgm ?? '') ?? parentId;
     graph.addRelationship({
-      id: generateId('CONTAINS', `${parentId}->${secId}`),
+      id: generateId('CONTAINS', `${secParent}->${secId}`),
       type: 'CONTAINS',
-      sourceId: parentId,
+      sourceId: secParent,
       targetId: secId,
       confidence: 1.0,
       reason: 'cobol-section',
@@ -414,7 +415,8 @@ function mapToGraph(
       },
     });
     // Parent: find the containing section, or fall back to module/file
-    const containerId = findContainingSection(para.line, extracted.sections, sectionNodeIds, extracted.programs) ?? parentId;
+    const containerId = findContainingSection(para.line, extracted.sections, sectionNodeIds, extracted.programs)
+      ?? (programModuleIds.get(owningPgmPara ?? '') ?? parentId);
     graph.addRelationship({
       id: generateId('CONTAINS', `${containerId}->${paraId}`),
       type: 'CONTAINS',
@@ -430,6 +432,8 @@ function mapToGraph(
   for (const item of extracted.dataItems) {
     if (item.name === 'FILLER') continue; // Skip anonymous fillers
     const propId = generatePropertyId(filePath, item);
+    const itemOwner = findOwningProgramName(item.line, extracted.programs);
+    const itemParent = programModuleIds.get(itemOwner ?? '') ?? parentId;
     graph.addNode({
       id: propId,
       label: 'Property',
@@ -443,9 +447,9 @@ function mapToGraph(
       },
     });
     graph.addRelationship({
-      id: generateId('CONTAINS', `${parentId}->${propId}`),
+      id: generateId('CONTAINS', `${itemParent}->${propId}`),
       type: 'CONTAINS',
-      sourceId: parentId,
+      sourceId: itemParent,
       targetId: propId,
       confidence: 1.0,
       reason: 'cobol-data-item',
@@ -595,18 +599,22 @@ function mapToGraph(
   const dataItemMap = buildDataItemMap(extracted.dataItems, filePath);
 
   // ── PROCEDURE DIVISION USING -> ACCESSES edges (parameter contract) ──
-  if (moduleId && extracted.procedureUsing.length > 0) {
-    for (const param of extracted.procedureUsing) {
-      const paramPropId = dataItemMap.get(param.toUpperCase());
-      if (paramPropId) {
-        graph.addRelationship({
-          id: generateId('ACCESSES', `${moduleId}->using->${param}`),
-          type: 'ACCESSES',
-          sourceId: moduleId,
-          targetId: paramPropId,
-          confidence: 1.0,
-          reason: 'cobol-procedure-using',
-        });
+  // Iterate per-program to handle nested programs with their own USING clauses
+  for (const prog of extracted.programs) {
+    const progModId = programModuleIds.get(prog.name.toUpperCase()) ?? moduleId;
+    if (progModId && prog.procedureUsing && prog.procedureUsing.length > 0) {
+      for (const param of prog.procedureUsing) {
+        const paramPropId = dataItemMap.get(param.toUpperCase());
+        if (paramPropId) {
+          graph.addRelationship({
+            id: generateId('ACCESSES', `${progModId}->using->${param}`),
+            type: 'ACCESSES',
+            sourceId: progModId,
+            targetId: paramPropId,
+            confidence: 1.0,
+            reason: 'cobol-procedure-using',
+          });
+        }
       }
     }
   }

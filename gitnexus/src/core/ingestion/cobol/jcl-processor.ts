@@ -49,7 +49,10 @@ export function processJclFiles(
   const moduleNames = new Map<string, string>(); // uppercase name -> node id
   graph.forEachNode(node => {
     if (node.label === 'Module') {
-      moduleNames.set(node.properties.name?.toUpperCase(), node.id);
+      const nodeName = node.properties.name;
+      if (typeof nodeName === 'string') {
+        moduleNames.set(nodeName.toUpperCase(), node.id);
+      }
     }
   });
 

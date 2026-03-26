@@ -687,7 +687,7 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.performs[0].thruTarget).toBe('LAST-PARA');
     });
 
-    it('PROCEDURE DIVISION USING RETURNING filters RETURNING as keyword', () => {
+    it('PROCEDURE DIVISION USING RETURNING excludes return value from USING list', () => {
       const src = cobol(
         '      IDENTIFICATION DIVISION.',
         '       PROGRAM-ID. TESTPROG.',
@@ -696,8 +696,8 @@ describe('extractCobolSymbolsWithRegex', () => {
         '           STOP RUN.',
       );
       const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
-      // RETURNING should be filtered out — only actual parameter names remain
-      expect(r.procedureUsing).toEqual(['WS-INPUT', 'WS-RESULT']);
+      // RETURNING and everything after it should be excluded — only USING parameters remain
+      expect(r.procedureUsing).toEqual(['WS-INPUT']);
     });
 
     it('RE_CALL_DYNAMIC does NOT false-match on WS-CALL compound identifier', () => {

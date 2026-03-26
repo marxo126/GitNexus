@@ -38,7 +38,6 @@ export interface CopyResolution {
 export interface CopyExpansionResult {
   expandedContent: string;
   copyResolutions: CopyResolution[];
-  expansionDepth: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,8 +58,18 @@ const RE_COBOL_IDENTIFIER = /\b([A-Z][A-Z0-9-]*)\b/gi;
  * Only strips if `|` appears in the code area (col 7+).
  */
 function stripInlineComment(line: string): string {
-  const idx = line.indexOf('|');
-  return idx >= 0 ? line.substring(0, idx) : line;
+  let inQuote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      if (ch === inQuote) inQuote = null;
+    } else if (ch === '"' || ch === "'") {
+      inQuote = ch;
+    } else if (ch === '|') {
+      return line.substring(0, i);
+    }
+  }
+  return line;
 }
 
 /**
@@ -91,7 +100,7 @@ function mergeLogicalLines(
 
     // Skip comment lines
     if (isCommentLine(raw)) {
-      logical.push({ text: '', lineNum: i });
+      logical.push({ text: '', lineNum: i + 1 });
       continue;
     }
 
@@ -103,13 +112,13 @@ function mergeLogicalLines(
         prev.text += continuation;
       }
       // Push empty placeholder to preserve line count
-      logical.push({ text: '', lineNum: i });
+      logical.push({ text: '', lineNum: i + 1 });
       continue;
     }
 
     // Normal line: strip inline comments
     const cleaned = stripInlineComment(raw);
-    logical.push({ text: cleaned, lineNum: i });
+    logical.push({ text: cleaned, lineNum: i + 1 });
   }
 
   return logical;
@@ -362,7 +371,7 @@ function applyReplacing(content: string, replacings: CopyReplacing[]): string {
  * @param resolveFile - Maps a COPY target name to a filesystem path, or null if not found
  * @param readFile    - Reads file content by path, or null if unreadable
  * @param maxDepth    - Maximum nesting depth for recursive expansion (default: 10)
- * @returns Expanded content, resolution metadata, and maximum depth reached
+ * @returns Expanded content and resolution metadata
  */
 export function expandCopies(
   content: string,
@@ -370,18 +379,17 @@ export function expandCopies(
   resolveFile: (name: string) => string | null,
   readFile: (path: string) => string | null,
   maxDepth: number = DEFAULT_MAX_DEPTH,
-  /** Optional shared set to deduplicate circular-COPY warnings across multiple calls. */
-  warnedCircular: Set<string> = new Set<string>(),
 ): CopyExpansionResult {
   const allResolutions: CopyResolution[] = [];
-  let maxDepthReached = 0;
+  const warnedCircular = new Set<string>();
+  let totalExpansions = 0;
+  const MAX_TOTAL_EXPANSIONS = 500;
 
   const expanded = expandRecursive(content, filePath, 0, new Set<string>());
 
   return {
     expandedContent: expanded,
     copyResolutions: allResolutions,
-    expansionDepth: maxDepthReached,
   };
 
   /**
@@ -398,10 +406,6 @@ export function expandCopies(
     depth: number,
     visited: Set<string>,
   ): string {
-    if (depth > maxDepthReached) {
-      maxDepthReached = depth;
-    }
-
     const rawLines = src.split('\n');
     const logicalLines = mergeLogicalLines(rawLines);
     const copyStatements = parseCopyStatements(logicalLines);
@@ -454,6 +458,18 @@ export function expandCopies(
         continue;
       }
 
+      // Guard against exponential breadth amplification (N copybooks each with N COPYs)
+      if (++totalExpansions > MAX_TOTAL_EXPANSIONS) {
+        if (!warnedCircular.has('__max_total__')) {
+          warnedCircular.add('__max_total__');
+          console.warn(
+            `[cobol-copy-expander] Max total expansions (${MAX_TOTAL_EXPANSIONS}) reached ` +
+            `in ${srcPath}. Skipping further expansions.`,
+          );
+        }
+        continue;
+      }
+
       // Read the copybook content
       const copybookContent = readFile(resolvedPath);
       if (copybookContent === null) {
@@ -474,9 +490,10 @@ export function expandCopies(
       );
 
       // Splice: replace the COPY statement lines with expanded content
+      // startLine/endLine are 1-based; convert to 0-based array index
       const expansionLines = expandedCopybook.split('\n');
       const removeCount = cs.endLine - cs.startLine + 1;
-      outputLines.splice(cs.startLine, removeCount, ...expansionLines);
+      outputLines.splice(cs.startLine - 1, removeCount, ...expansionLines);
     }
 
     return outputLines.join('\n');

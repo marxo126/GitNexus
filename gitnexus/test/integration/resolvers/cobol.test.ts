@@ -38,17 +38,17 @@ describe('COBOL full system extraction', () => {
       expect(nodes).toEqual(['AUDITLOG', 'CUSTUPDT', 'INNER-PROG', 'OUTER-PROG', 'RPTGEN']);
     });
 
-    it('produces exactly 19 Function nodes', () => {
+    it('produces exactly 21 Function nodes', () => {
       const nodes = getNodesByLabel(result, 'Function');
-      expect(nodes.length).toBe(19);
+      expect(nodes.length).toBe(21);
       expect(nodes).toEqual([
-        'ABEND-HANDLER', 'CLEANUP-PARAGRAPH', 'EXIT-PARAGRAPH',
-        'FETCH-DATA', 'FORMAT-REPORT', 'INIT-PARAGRAPH',
+        'ABEND-HANDLER', 'BUILD-SORT-INPUT', 'CLEANUP-PARAGRAPH',
+        'EXIT-PARAGRAPH', 'FETCH-DATA', 'FORMAT-REPORT', 'INIT-PARAGRAPH',
         'INNER-MAIN', 'INNER-PROCESS',
         'MAIN-PARAGRAPH', 'MAIN-PARAGRAPH', 'MAIN-PARAGRAPH',
         'OUTER-MAIN', 'OUTER-PROCESS',
         'PROCESS-PARAGRAPH', 'READ-CUSTOMER', 'SEND-SCREEN',
-        'UPDATE-BALANCE', 'WRITE-CUSTOMER', 'WRITE-LOG',
+        'UPDATE-BALANCE', 'WRITE-CUSTOMER', 'WRITE-LOG', 'WRITE-SORTED',
       ]);
     });
 
@@ -101,11 +101,15 @@ describe('COBOL full system extraction', () => {
 
   describe('CALLS edge completeness', () => {
 
-    it('produces exactly 11 CALLS edges with reason cobol-perform', () => {
+    it('produces exactly 15 CALLS edges with reason cobol-perform', () => {
       const edges = getRelationships(result, 'CALLS').filter(e => e.rel.reason === 'cobol-perform');
-      expect(edges.length).toBe(11);
+      expect(edges.length).toBe(15);
       expect(edgeSet(edges)).toEqual([
+        'FORMAT-REPORT \u2192 BUILD-SORT-INPUT',
+        'FORMAT-REPORT \u2192 FETCH-DATA',
         'FORMAT-REPORT \u2192 MAIN-PARAGRAPH',
+        'FORMAT-REPORT \u2192 SEND-SCREEN',
+        'FORMAT-REPORT \u2192 WRITE-SORTED',
         'INNER-MAIN \u2192 INNER-PROCESS',
         'MAIN-PARAGRAPH \u2192 CLEANUP-PARAGRAPH',
         'MAIN-PARAGRAPH \u2192 FETCH-DATA',
@@ -138,10 +142,15 @@ describe('COBOL full system extraction', () => {
       ]);
     });
 
-    it('produces exactly 1 CALLS edge with reason cobol-goto', () => {
+    it('produces exactly 4 CALLS edges with reason cobol-goto', () => {
       const edges = getRelationships(result, 'CALLS').filter(e => e.rel.reason === 'cobol-goto');
-      expect(edges.length).toBe(1);
-      expect(edgeSet(edges)).toEqual(['MAIN-PARAGRAPH \u2192 EXIT-PARAGRAPH']);
+      expect(edges.length).toBe(4);
+      expect(edgeSet(edges)).toEqual([
+        'FORMAT-REPORT \u2192 FETCH-DATA',
+        'FORMAT-REPORT \u2192 FORMAT-REPORT',
+        'FORMAT-REPORT \u2192 SEND-SCREEN',
+        'MAIN-PARAGRAPH \u2192 EXIT-PARAGRAPH',
+      ]);
     });
 
     it('produces exactly 1 CALLS edge with reason cics-link', () => {
@@ -216,16 +225,16 @@ describe('COBOL full system extraction', () => {
       ]);
     });
 
-    it('produces exactly 19 CONTAINS edges with reason cobol-paragraph', () => {
+    it('produces exactly 21 CONTAINS edges with reason cobol-paragraph', () => {
       const edges = getRelationships(result, 'CONTAINS').filter(e => e.rel.reason === 'cobol-paragraph');
-      expect(edges.length).toBe(19);
+      expect(edges.length).toBe(21);
       expect(edgeSet(edges)).toEqual([
         'AUDITLOG \u2192 MAIN-PARAGRAPH',
         'AUDITLOG \u2192 WRITE-LOG',
         'INIT-SECTION \u2192 INIT-PARAGRAPH',
         'INIT-SECTION \u2192 MAIN-PARAGRAPH',
-        'OUTER-PROG \u2192 INNER-MAIN',
-        'OUTER-PROG \u2192 INNER-PROCESS',
+        'INNER-PROG \u2192 INNER-MAIN',
+        'INNER-PROG \u2192 INNER-PROCESS',
         'OUTER-PROG \u2192 OUTER-MAIN',
         'OUTER-PROG \u2192 OUTER-PROCESS',
         'PROCESSING-SECTION \u2192 CLEANUP-PARAGRAPH',
@@ -234,11 +243,13 @@ describe('COBOL full system extraction', () => {
         'PROCESSING-SECTION \u2192 UPDATE-BALANCE',
         'PROCESSING-SECTION \u2192 WRITE-CUSTOMER',
         'RPTGEN \u2192 ABEND-HANDLER',
+        'RPTGEN \u2192 BUILD-SORT-INPUT',
         'RPTGEN \u2192 EXIT-PARAGRAPH',
         'RPTGEN \u2192 FETCH-DATA',
         'RPTGEN \u2192 FORMAT-REPORT',
         'RPTGEN \u2192 MAIN-PARAGRAPH',
         'RPTGEN \u2192 SEND-SCREEN',
+        'RPTGEN \u2192 WRITE-SORTED',
       ]);
     });
 
@@ -267,7 +278,7 @@ describe('COBOL full system extraction', () => {
         'CUSTUPDT \u2192 WS-NAME',
         'CUSTUPDT \u2192 WS-PROG-NAME',
         'CUSTUPDT \u2192 WS-RECORD',
-        'OUTER-PROG \u2192 WS-INNER-CODE',
+        'INNER-PROG \u2192 WS-INNER-CODE',
         'OUTER-PROG \u2192 WS-OUTER-FLAG',
         'RPTGEN \u2192 PREMIUM-CUSTOMER',
         'RPTGEN \u2192 REGULAR-CUSTOMER',
@@ -433,34 +444,165 @@ describe('COBOL full system extraction', () => {
   });
 
   // =====================================================================
+  // FEATURE-SPECIFIC ASSERTIONS — validates all review findings resolved
+  // =====================================================================
+
+  describe('multi-PERFORM on same line (Finding #III)', () => {
+
+    it('captures both PERFORMs in IF/ELSE on a single logical line', () => {
+      // IF WS-COUNT > 0 PERFORM FETCH-DATA ELSE PERFORM SEND-SCREEN
+      const edges = getRelationships(result, 'CALLS').filter(
+        e => e.rel.reason === 'cobol-perform' && e.source === 'FORMAT-REPORT',
+      );
+      const targets = edges.map(e => e.target).sort();
+      expect(targets).toContain('FETCH-DATA');
+      expect(targets).toContain('SEND-SCREEN');
+    });
+  });
+
+  describe('INPUT/OUTPUT PROCEDURE IS in SORT (Finding #iii)', () => {
+
+    it('creates CALLS edges for INPUT PROCEDURE and OUTPUT PROCEDURE targets', () => {
+      const edges = getRelationships(result, 'CALLS').filter(
+        e => e.rel.reason === 'cobol-perform' && e.source === 'FORMAT-REPORT',
+      );
+      const targets = edges.map(e => e.target).sort();
+      expect(targets).toContain('BUILD-SORT-INPUT');
+      expect(targets).toContain('WRITE-SORTED');
+    });
+
+    it('creates paragraph nodes for INPUT/OUTPUT PROCEDURE targets', () => {
+      const nodes = getNodesByLabel(result, 'Function');
+      expect(nodes).toContain('BUILD-SORT-INPUT');
+      expect(nodes).toContain('WRITE-SORTED');
+    });
+  });
+
+  describe('GO TO DEPENDING ON multi-target (Finding #iv)', () => {
+
+    it('captures all three targets from GO TO ... DEPENDING ON', () => {
+      // GO TO FETCH-DATA FORMAT-REPORT SEND-SCREEN DEPENDING ON WS-COUNT
+      const edges = getRelationships(result, 'CALLS').filter(
+        e => e.rel.reason === 'cobol-goto' && e.source === 'FORMAT-REPORT',
+      );
+      expect(edges.length).toBe(3);
+      expect(edgeSet(edges)).toEqual([
+        'FORMAT-REPORT \u2192 FETCH-DATA',
+        'FORMAT-REPORT \u2192 FORMAT-REPORT',
+        'FORMAT-REPORT \u2192 SEND-SCREEN',
+      ]);
+    });
+  });
+
+  describe('MOVE CORR abbreviation (Finding #IV)', () => {
+
+    it('produces ACCESSES edges for MOVE CORR with corresponding reason', () => {
+      const readEdges = getRelationships(result, 'ACCESSES').filter(
+        e => e.rel.reason === 'cobol-move-corresponding-read',
+      );
+      expect(readEdges.length).toBe(1);
+      expect(edgeSet(readEdges)).toEqual(['FORMAT-REPORT \u2192 WS-CUSTOMER-DATA']);
+
+      const writeEdges = getRelationships(result, 'ACCESSES').filter(
+        e => e.rel.reason === 'cobol-move-corresponding-write',
+      );
+      expect(writeEdges.length).toBe(1);
+      expect(edgeSet(writeEdges)).toEqual(['FORMAT-REPORT \u2192 WS-REPORT-LINE']);
+    });
+  });
+
+  describe('nested program CONTAINS attribution (Finding #I, #II)', () => {
+
+    it('attributes INNER-PROG paragraphs to INNER-PROG, not OUTER-PROG', () => {
+      const edges = getRelationships(result, 'CONTAINS').filter(
+        e => e.rel.reason === 'cobol-paragraph' && e.target === 'INNER-MAIN',
+      );
+      expect(edges.length).toBe(1);
+      expect(edges[0].source).toBe('INNER-PROG');
+    });
+
+    it('attributes INNER-PROG data items to INNER-PROG, not OUTER-PROG', () => {
+      const edges = getRelationships(result, 'CONTAINS').filter(
+        e => e.rel.reason === 'cobol-data-item' && e.target === 'WS-INNER-CODE',
+      );
+      expect(edges.length).toBe(1);
+      expect(edges[0].source).toBe('INNER-PROG');
+    });
+
+    it('attributes OUTER-PROG data items to OUTER-PROG', () => {
+      const edges = getRelationships(result, 'CONTAINS').filter(
+        e => e.rel.reason === 'cobol-data-item' && e.target === 'WS-OUTER-FLAG',
+      );
+      expect(edges.length).toBe(1);
+      expect(edges[0].source).toBe('OUTER-PROG');
+    });
+  });
+
+  describe('per-program PROCEDURE DIVISION USING (Finding #III partial)', () => {
+
+    it('creates ACCESSES edges from AUDITLOG, not from wrong program', () => {
+      const edges = getRelationships(result, 'ACCESSES').filter(
+        e => e.rel.reason === 'cobol-procedure-using',
+      );
+      expect(edges.length).toBe(2);
+      // Both edges should source from AUDITLOG (the program that declares USING)
+      for (const e of edges) {
+        expect(e.source).toBe('AUDITLOG');
+      }
+    });
+  });
+
+  describe('PERFORM THRU edge correctness', () => {
+
+    it('captures FORMAT-REPORT PERFORM THRU from MAIN-PARAGRAPH', () => {
+      const edges = getRelationships(result, 'CALLS').filter(
+        e => e.rel.reason === 'cobol-perform-thru',
+      );
+      expect(edgeSet(edges)).toContain('FORMAT-REPORT \u2192 FORMAT-REPORT');
+    });
+  });
+
+  describe('nested program CALLS attribution', () => {
+
+    it('attributes INNER-PROG PERFORM edges to INNER-PROG paragraphs', () => {
+      const edges = getRelationships(result, 'CALLS').filter(
+        e => e.rel.reason === 'cobol-perform' && e.source === 'INNER-MAIN',
+      );
+      expect(edges.length).toBe(1);
+      expect(edges[0].target).toBe('INNER-PROCESS');
+    });
+  });
+
+  // =====================================================================
   // GRAND TOTALS — catch any unexpected edge leakage
   // =====================================================================
 
   describe('grand totals', () => {
 
-    it('produces exactly 24 total CALLS edges', () => {
-      // 11 perform + 2 perform-thru + 3 call + 1 goto + 1 link + 1 xctl
+    it('produces exactly 31 total CALLS edges', () => {
+      // 15 perform + 2 perform-thru + 3 call + 4 goto + 1 link + 1 xctl
       // + 1 handle-abend + 1 return-transid + 2 jcl-exec-pgm + 1 jcl-dd
-      expect(getRelationships(result, 'CALLS').length).toBe(24);
+      expect(getRelationships(result, 'CALLS').length).toBe(31);
     });
 
-    it('produces exactly 79 total CONTAINS edges', () => {
-      // 4 program-id + 1 nested-program + 2 section + 19 paragraph
+    it('produces exactly 81 total CONTAINS edges', () => {
+      // 4 program-id + 1 nested-program + 2 section + 21 paragraph
       // + 36 data-item + 8 exec-cics + 1 exec-sql + 1 dynamic-call
       // + 1 cics-dynamic-program + 2 entry-point + 1 file-declaration
       // + 1 jcl-job + 2 jcl-step
-      expect(getRelationships(result, 'CONTAINS').length).toBe(79);
+      expect(getRelationships(result, 'CONTAINS').length).toBe(81);
     });
 
     it('produces exactly 2 total IMPORTS edges', () => {
       expect(getRelationships(result, 'IMPORTS').length).toBe(2);
     });
 
-    it('produces exactly 21 total ACCESSES edges', () => {
-      // 4 move-read + 5 move-write + 1 file-read + 1 map + 1 queue-write
+    it('produces exactly 23 total ACCESSES edges', () => {
+      // 4 move-read + 5 move-write + 1 move-corresponding-read + 1 move-corresponding-write
+      // + 1 file-read + 1 map + 1 queue-write
       // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sort-giving
       // + 2 procedure-using + 1 sql-select
-      expect(getRelationships(result, 'ACCESSES').length).toBe(21);
+      expect(getRelationships(result, 'ACCESSES').length).toBe(23);
     });
   });
 });
