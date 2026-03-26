@@ -547,4 +547,72 @@ WHEN TO USE: After changing group.yaml or re-indexing member repos.`,
       required: ['name'],
     },
   },
+  {
+    name: 'group_contracts',
+    description: `Inspect contracts and cross-links from the group's contracts.json.
+
+WHEN TO USE: Debug cross-repo links after group_sync.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        type: { type: 'string', description: 'Filter by contract type (http, topic, …)' },
+        repo: { type: 'string', description: 'Filter by group repo path (e.g. app/backend)' },
+        unmatchedOnly: { type: 'boolean', description: 'Only contracts with no cross-link' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'group_query',
+    description: `Run the query tool across all repos in a group and merge process results via reciprocal rank fusion.
+
+WHEN TO USE: Semantic / hybrid search across a whole product group.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        query: { type: 'string', description: 'Search query' },
+        subgroup: { type: 'string', description: 'Limit to repo paths under this prefix' },
+        limit: { type: 'number', description: 'Max merged results (default 5)' },
+      },
+      required: ['name', 'query'],
+    },
+  },
+  {
+    name: 'group_status',
+    description: `Report index staleness (commit vs HEAD) and Contract Registry staleness (indexedAt) for each repo in a group.
+
+WHEN TO USE: Before group_sync or when agents should refresh indexes.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'dead_code',
+    description: `Detect unused functions, methods, and classes in the codebase.
+
+Traverses the knowledge graph to find symbols with zero incoming references.
+
+WHEN TO USE: Code cleanup, identifying unused code before refactoring, finding leftover functions after feature removal.
+AFTER THIS: Use context() on flagged symbols to verify they're truly unused. Use impact() to check if removing them is safe.
+
+Returns symbols grouped by file with confidence tags:
+- dead: zero callers, zero imports, not an entry point, not in any execution flow
+- unused_export: exported but never imported by another file`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Repository name or path. Omit if only one repo is indexed.' },
+        label: { type: 'string', description: 'Filter by node type: Function, Method, Class, Constructor. Default: all callable types.' },
+        include_tests: { type: 'boolean', description: 'Include test files in results. Default: false.' },
+        limit: { type: 'number', description: 'Max results. Default: 50.', default: 50 },
+      },
+      required: [],
+    },
+  },
 ];
