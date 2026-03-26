@@ -16,7 +16,7 @@
 import path from 'node:path';
 import { generateId } from '../../lib/utils.js';
 import { SupportedLanguages } from '../../config/supported-languages.js';
-import type { KnowledgeGraph, GraphNode } from '../graph/types.js';
+import type { KnowledgeGraph } from '../graph/types.js';
 import {
   preprocessCobolSource,
   extractCobolSymbolsWithRegex,
