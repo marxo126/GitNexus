@@ -35,11 +35,11 @@
 export interface CobolRegexResults {
   programName: string | null;
   /** All programs in this file with line-range boundaries for per-program scoping. */
-  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number; procedureUsing?: string[] }>;
+  programs: Array<{ name: string; startLine: number; endLine: number; nestingDepth: number; procedureUsing?: string[]; isCommon?: boolean }>;
   paragraphs: Array<{ name: string; line: number }>;
   sections: Array<{ name: string; line: number }>;
   performs: Array<{ caller: string | null; target: string; thruTarget?: string; line: number }>;
-  calls: Array<{ target: string; line: number; isQuoted: boolean; parameters?: string[] }>;
+  calls: Array<{ target: string; line: number; isQuoted: boolean; parameters?: string[]; returning?: string }>;
   copies: Array<{ target: string; line: number }>;
   dataItems: Array<{
     name: string;
@@ -51,6 +51,8 @@ export interface CobolRegexResults {
     dependingOn?: string;
     redefines?: string;
     values?: string[];
+    isExternal?: boolean;
+    isGlobal?: boolean;
     section: 'working-storage' | 'linkage' | 'file' | 'local-storage' | 'screen' | 'unknown';
   }>;
   fileDeclarations: Array<{
@@ -59,7 +61,9 @@ export interface CobolRegexResults {
     organization?: string;
     access?: string;
     recordKey?: string;
+    alternateKeys?: string[];
     fileStatus?: string;
+    isOptional?: boolean;
     line: number;
   }>;
   fdEntries: Array<{
@@ -236,7 +240,7 @@ const RE_DIVISION = /\b(IDENTIFICATION|ENVIRONMENT|DATA|PROCEDURE)\s+DIVISION\b/
 const RE_SECTION = /\b(WORKING-STORAGE|LINKAGE|FILE|LOCAL-STORAGE|SCREEN|INPUT-OUTPUT|CONFIGURATION)\s+SECTION\b/i;
 
 // IDENTIFICATION DIVISION
-const RE_PROGRAM_ID = /\bPROGRAM-ID\.\s*([A-Z][A-Z0-9-]*)/i;
+const RE_PROGRAM_ID = /\bPROGRAM-ID\.\s*([A-Z][A-Z0-9-]*)(?:\s+IS\s+COMMON)?/i;
 const RE_END_PROGRAM = /\bEND\s+PROGRAM\s+([A-Z][A-Z0-9-]*)\s*\./i;
 const RE_AUTHOR = /^\s+AUTHOR\.\s*(.+)/i;
 const RE_DATE_WRITTEN = /^\s+DATE-WRITTEN\.\s*(.+)/i;
@@ -385,8 +389,10 @@ function parseDataItemClauses(rest: string): {
   occurs?: number;
   dependingOn?: string;
   value?: string;
+  isExternal?: boolean;
+  isGlobal?: boolean;
 } {
-  const result: { pic?: string; usage?: string; redefines?: string; occurs?: number; dependingOn?: string; value?: string } = {};
+  const result: { pic?: string; usage?: string; redefines?: string; occurs?: number; dependingOn?: string; value?: string; isExternal?: boolean; isGlobal?: boolean } = {};
 
   // Strip trailing period for easier parsing
   const text = rest.replace(/\.\s*$/, '');
@@ -426,12 +432,8 @@ function parseDataItemClauses(rest: string): {
   }
 
   // IS EXTERNAL / IS GLOBAL
-  if (/\bIS\s+EXTERNAL\b/i.test(text)) {
-    result.usage = (result.usage ?? '') + ' external';
-  }
-  if (/\bIS\s+GLOBAL\b/i.test(text)) {
-    result.usage = (result.usage ?? '') + ' global';
-  }
+  result.isExternal = /\bIS\s+EXTERNAL\b/i.test(text) || undefined;
+  result.isGlobal = /\bIS\s+GLOBAL\b/i.test(text) || undefined;
 
   // VALUE [IS] literal/constant
   if (!result.value) {
@@ -513,7 +515,9 @@ interface FileDeclaration {
   organization?: string;
   access?: string;
   recordKey?: string;
+  alternateKeys?: string[];
   fileStatus?: string;
+  isOptional?: boolean;
   line: number;
 }
 
@@ -550,11 +554,20 @@ function parseSelectStatement(stmt: string, startLine: number): FileDeclaration 
     result.recordKey = keyMatch[1];
   }
 
+  // ALTERNATE RECORD KEY
+  const altKeyMatches = text.matchAll(/\bALTERNATE\s+RECORD\s+KEY\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/gi);
+  const alternateKeys: string[] = [];
+  for (const m of altKeyMatches) alternateKeys.push(m[1]);
+  if (alternateKeys.length > 0) result.alternateKeys = alternateKeys;
+
   // FILE STATUS IS / STATUS IS
   const statusMatch = text.match(/\b(?:FILE\s+)?STATUS\s+(?:IS\s+)?([A-Z][A-Z0-9-]+)/i);
   if (statusMatch) {
     result.fileStatus = statusMatch[1];
   }
+
+  // SELECT OPTIONAL flag
+  result.isOptional = /^SELECT\s+OPTIONAL\b/i.test(text) || undefined;
 
   return result;
 }
@@ -785,7 +798,7 @@ export function extractCobolSymbolsWithRegex(
   let currentParagraph: string | null = null;
 
   // Program boundary stack for nested PROGRAM-ID / END PROGRAM tracking
-  const programBoundaryStack: Array<{ name: string; startLine: number; procedureUsing?: string[] }> = [];
+  const programBoundaryStack: Array<{ name: string; startLine: number; procedureUsing?: string[]; isCommon?: boolean }> = [];
 
   // SELECT accumulator (multi-line)
   let selectAccum: string | null = null;
@@ -955,6 +968,7 @@ export function extractCobolSymbolsWithRegex(
       endLine: rawLines.length,
       nestingDepth: programBoundaryStack.length,
       procedureUsing: topProgram.procedureUsing,
+      isCommon: topProgram.isCommon,
     });
   }
   // Sort by startLine so outer programs come first
@@ -1022,6 +1036,7 @@ export function extractCobolSymbolsWithRegex(
           endLine: lineNum,
           nestingDepth: programBoundaryStack.length,
           procedureUsing: topProgram.procedureUsing,
+          isCommon: topProgram.isCommon,
         });
       }
       return;
@@ -1122,7 +1137,10 @@ export function extractCobolSymbolsWithRegex(
         ? usingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
             .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
         : undefined;
-      result.calls.push({ target: callTarget, line: lineNum, isQuoted: true, parameters });
+      // Also capture RETURNING target
+      const retMatch = afterCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
+      const returning = retMatch ? retMatch[1] : undefined;
+      result.calls.push({ target: callTarget, line: lineNum, isQuoted: true, parameters, returning });
       hasQuotedCall = true;
     }
     // Also check for dynamic CALL (no quotes) — checked separately, not in else branch
@@ -1136,7 +1154,10 @@ export function extractCobolSymbolsWithRegex(
           ? dynUsingMatch[1].split(/\bRETURNING\b/i)[0].trim().split(/\s+/)
               .filter(s => s.length > 0 && !CALL_USING_FILTER.has(s.toUpperCase()) && /^[A-Z][A-Z0-9-]+$/i.test(s))
           : undefined;
-        result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters });
+        // Also capture RETURNING target for dynamic calls
+        const dynRetMatch = afterDynCall.match(/\bRETURNING\s+([A-Z][A-Z0-9-]+)/i);
+        const dynReturning = dynRetMatch ? dynRetMatch[1] : undefined;
+        result.calls.push({ target: dynCallMatch[1], line: lineNum, isQuoted: false, parameters: dynParameters, returning: dynReturning });
       }
     }
 
@@ -1173,8 +1194,11 @@ export function extractCobolSymbolsWithRegex(
       currentEnvSection = null;
       currentParagraph = null;
 
+      // Detect COMMON attribute
+      const isCommon = /\bIS\s+COMMON\b/i.test(line);
+
       // Push program boundary for line-range tracking
-      programBoundaryStack.push({ name: m[1], startLine: lineNum });
+      programBoundaryStack.push({ name: m[1], startLine: lineNum, isCommon: isCommon || undefined });
       return;
     }
 
@@ -1378,6 +1402,8 @@ export function extractCobolSymbolsWithRegex(
         if (clauses.dependingOn) item.dependingOn = clauses.dependingOn;
         if (clauses.redefines) item.redefines = clauses.redefines;
         if (clauses.value) item.values = [clauses.value];
+        if (clauses.isExternal) item.isExternal = true;
+        if (clauses.isGlobal) item.isGlobal = true;
 
         result.dataItems.push(item);
 

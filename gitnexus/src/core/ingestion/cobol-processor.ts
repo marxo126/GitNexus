@@ -307,6 +307,10 @@ function mapToGraph(
   let moduleId: string | undefined;
   if (extracted.programName) {
     moduleId = generateId('Module', `${filePath}:${extracted.programName}`);
+    const metaDesc = [
+      extracted.programMetadata.author && `author:${extracted.programMetadata.author}`,
+      extracted.programMetadata.dateWritten && `date:${extracted.programMetadata.dateWritten}`,
+    ].filter(Boolean).join(' ');
     graph.addNode({
       id: moduleId,
       label: 'Module',
@@ -317,6 +321,7 @@ function mapToGraph(
         endLine: lines.length,
         language: SupportedLanguages.Cobol,
         isExported: true,
+        description: metaDesc || undefined,
       },
     });
     graph.addRelationship({
@@ -351,7 +356,7 @@ function mapToGraph(
         endLine: prog.endLine,
         language: SupportedLanguages.Cobol,
         isExported: true,
-        description: 'nested-program',
+        description: `nested-program${prog.isCommon ? ' common' : ''}`,
       },
     });
     // Find enclosing program by line-range containment
@@ -585,6 +590,20 @@ function mapToGraph(
           }
         }
       }
+      // CALL RETURNING target for dynamic call too
+      if (call.returning) {
+        const retPropId = dataItemMap.get(call.returning.toUpperCase());
+        if (retPropId) {
+          graph.addRelationship({
+            id: generateId('ACCESSES', `${dynCallOwner}->call-returning->${call.returning}:L${call.line}`),
+            type: 'ACCESSES',
+            sourceId: dynCallOwner,
+            targetId: retPropId,
+            confidence: 0.9,
+            reason: 'cobol-call-returning',
+          });
+        }
+      }
       continue;
     }
 
@@ -617,6 +636,20 @@ function mapToGraph(
             reason: 'cobol-call-using',
           });
         }
+      }
+    }
+    // CALL RETURNING target -> ACCESSES edge (return value data flow)
+    if (call.returning) {
+      const retPropId = dataItemMap.get(call.returning.toUpperCase());
+      if (retPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callOwner}->call-returning->${call.returning}:L${call.line}`),
+          type: 'ACCESSES',
+          sourceId: callOwner,
+          targetId: retPropId,
+          confidence: 0.9,
+          reason: 'cobol-call-returning',
+        });
       }
     }
   }
@@ -1102,7 +1135,7 @@ function mapToGraph(
         startLine: fd.line,
         endLine: fd.line,
         language: SupportedLanguages.Cobol,
-        description: `assign:${fd.assignTo}${fd.organization ? ` org:${fd.organization}` : ''}${fd.access ? ` access:${fd.access}` : ''}`,
+        description: `assign:${fd.assignTo}${fd.isOptional ? ' optional' : ''}${fd.organization ? ` org:${fd.organization}` : ''}${fd.access ? ` access:${fd.access}` : ''}`,
       },
     });
     const fdOwner = owningModuleId(fd.line);
