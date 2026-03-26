@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'StateSlot';   // Shared state: React Query cache, Context, Redux slice, etc.
 
 export type NodeProperties = {
   name: string;
@@ -89,6 +90,9 @@ export type NodeProperties = {
   responseKeys?: string[];
   errorKeys?: string[];
   middleware?: string[];
+  // StateSlot-specific
+  slotKind?: string;       // react-query | swr | react-context | redux | zustand | trpc | graphql | custom-hook
+  cacheKey?: string;        // Literal or pattern of cache/state key
   // Extensible
   [key: string]: unknown;
 };
@@ -115,7 +119,9 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'PRODUCES'        // Function/Method -> StateSlot (writes data into shared state)
+  | 'CONSUMES';       // Function/Method -> StateSlot (reads data from shared state)
 
 export interface GraphNode {
   id: string;

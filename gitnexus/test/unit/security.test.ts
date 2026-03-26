@@ -123,6 +123,8 @@ describe('VALID_RELATION_TYPES', () => {
       'HANDLES_TOOL',
       'ENTRY_POINT_OF',
       'WRAPS',
+      'PRODUCES',
+      'CONSUMES',
     ]) {
       expect(VALID_RELATION_TYPES.has(t)).toBe(true);
     }

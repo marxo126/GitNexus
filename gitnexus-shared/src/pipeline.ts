@@ -10,6 +10,7 @@ export type PipelinePhase =
   | 'imports'
   | 'calls'
   | 'heritage'
+  | 'state-slots'
   | 'communities'
   | 'processes'
   | 'enriching'

@@ -278,6 +278,9 @@ export const streamAllCSVsToDisk = async (
     'id,name,filePath,description',
   );
 
+  // StateSlot nodes for shared state tracking
+  const stateSlotWriter = new BufferedCSVWriter(path.join(csvDir, 'stateslot.csv'), 'id,name,filePath,slotKind,cacheKey');
+
   // Multi-language node types share the same CSV shape (no isExported column)
   const multiLangHeader = 'id,name,filePath,startLine,endLine,content,description';
   const MULTI_LANG_TYPES = [
@@ -447,6 +450,17 @@ export const streamAllCSVsToDisk = async (
           ].join(','),
         );
         break;
+      case 'StateSlot':
+        await stateSlotWriter.addRow(
+          [
+            escapeCSVField(node.id),
+            escapeCSVField(node.properties.name || ''),
+            escapeCSVField(node.properties.filePath || ''),
+            escapeCSVField(node.properties.slotKind || ''),
+            escapeCSVField(node.properties.cacheKey || ''),
+          ].join(','),
+        );
+        break;
       default: {
         // Code element nodes (Function, Class, Interface, CodeElement)
         const writer = codeWriterMap[node.label];
@@ -501,6 +515,7 @@ export const streamAllCSVsToDisk = async (
     sectionWriter,
     routeWriter,
     toolWriter,
+    stateSlotWriter,
     ...multiLangWriters.values(),
   ];
   await Promise.all(allWriters.map((w) => w.finish()));
@@ -537,6 +552,7 @@ export const streamAllCSVsToDisk = async (
     ['Section' as NodeTableName, sectionWriter],
     ['Route' as NodeTableName, routeWriter],
     ['Tool' as NodeTableName, toolWriter],
+    ['StateSlot' as NodeTableName, stateSlotWriter],
     ...Array.from(multiLangWriters.entries()).map(
       ([name, w]) => [name as NodeTableName, w] as [NodeTableName, BufferedCSVWriter],
     ),

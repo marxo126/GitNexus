@@ -30,6 +30,7 @@ import {
 import { GroupService, type GroupToolPort } from '../../core/group/service.js';
 import { collectBestChunks } from '../../core/embeddings/types.js';
 import { EMBEDDING_TABLE_NAME, EMBEDDING_INDEX_NAME } from '../../core/lbug/schema.js';
+import { CONFIDENCE_MAP } from '../../core/ingestion/state-slot-detectors/types.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
 
@@ -89,6 +90,7 @@ export const VALID_NODE_LABELS = new Set([
   'Module',
   'Route',
   'Tool',
+  'StateSlot',
 ]);
 
 /** Valid relation types for impact analysis filtering */
@@ -108,6 +110,8 @@ export const VALID_RELATION_TYPES = new Set([
   'HANDLES_TOOL',
   'ENTRY_POINT_OF',
   'WRAPS',
+  'PRODUCES',
+  'CONSUMES',
 ]);
 
 /**
@@ -154,6 +158,71 @@ const confidenceForRelType = (relType: string | undefined): number =>
 function logQueryError(context: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`GitNexus [${context}]: ${msg}`);
+}
+
+/**
+ * Parse shape metadata from a PRODUCES/CONSUMES edge reason field.
+ * Format: "shape-{confidence}|keys:k1,k2|type:TypeName"
+ */
+export function parseShapeReason(reason: string | null | undefined): {
+  confidence: number;
+  keys: string[];
+  typeName: string | null;
+} {
+  if (!reason) return { confidence: 0, keys: [], typeName: null };
+  let confidence = 0;
+  let keys: string[] = [];
+  let typeName: string | null = null;
+
+  const confMatch = reason.match(/^shape-([a-z-]+|\d*\.?\d+)/);
+  if (confMatch) {
+    const raw = confMatch[1];
+    // Map string labels to numeric confidence (matches state-slot-processor.ts)
+    confidence = CONFIDENCE_MAP[raw] ?? (parseFloat(raw) || 0);
+  }
+
+  const keysMatch = reason.match(/\|keys:([^|]+)/);
+  if (keysMatch) keys = keysMatch[1].split(',').filter(k => k.length > 0);
+
+  const typeMatch = reason.match(/\|type:([^|]+)/);
+  if (typeMatch) typeName = typeMatch[1];
+
+  return { confidence, keys, typeName };
+}
+
+/**
+ * Compute shape mismatch verdict for a state slot.
+ * - 'conflict': Multiple producers write different shapes (key sets differ)
+ * - 'suspicious': Consumer accesses keys not found in any producer
+ * - 'ok': No mismatches detected
+ */
+export function computeShapeVerdict(
+  producers: Array<{ keys: string[]; typeName: string | null }>,
+  consumers: Array<{ keys: string[] }>,
+): 'conflict' | 'suspicious' | 'ok' {
+  // Check for producer conflicts: do producers agree on shape?
+  if (producers.length > 1) {
+    const keySignatures = producers.map(p => [...p.keys].sort().join(','));
+    const uniqueSignatures = new Set(keySignatures);
+    if (uniqueSignatures.size > 1) return 'conflict';
+  }
+
+  // Collect all keys produced
+  const allProducedKeys = new Set<string>();
+  for (const p of producers) {
+    for (const k of p.keys) allProducedKeys.add(k);
+  }
+
+  // Check if any consumer accesses keys not in any producer
+  if (allProducedKeys.size > 0) {
+    for (const c of consumers) {
+      for (const k of c.keys) {
+        if (!allProducedKeys.has(k)) return 'suspicious';
+      }
+    }
+  }
+
+  return 'ok';
 }
 
 export interface CodebaseContext {
@@ -497,6 +566,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'data_flow':
+        return this.dataFlow(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -1326,6 +1397,36 @@ export class LocalBackend {
       logQueryError('context:process-participation', e);
     }
 
+    // State Slot participation: PRODUCES and CONSUMES edges
+    let producesRows: any[] = [];
+    let consumesRows: any[] = [];
+    try {
+      producesRows = await executeParameterized(
+        repo.id,
+        `
+        MATCH (n {id: $symId})-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'PRODUCES'
+        RETURN s.name AS slotName, s.slotKind AS slotKind, s.cacheKey AS cacheKey, r.reason AS reason
+      `,
+        { symId },
+      );
+    } catch (e) {
+      logQueryError('context:produces-slots', e);
+    }
+    try {
+      consumesRows = await executeParameterized(
+        repo.id,
+        `
+        MATCH (n {id: $symId})-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'CONSUMES'
+        RETURN s.name AS slotName, s.slotKind AS slotKind, s.cacheKey AS cacheKey, r.reason AS reason
+      `,
+        { symId },
+      );
+    } catch (e) {
+      logQueryError('context:consumes-slots', e);
+    }
+
     // Helper to categorize refs
     const categorize = (rows: any[]) => {
       const cats: Record<string, any[]> = {};
@@ -1399,6 +1500,30 @@ export class LocalBackend {
         step_index: r.step || r[2],
         step_count: r.stepCount || r[3],
       })),
+      ...((producesRows.length > 0 || consumesRows.length > 0) ? {
+        stateSlots: {
+          produces: producesRows.map((r: any) => {
+            const reason: string | null = r.reason ?? r[3] ?? null;
+            const shape = parseShapeReason(reason);
+            return {
+              slotName: r.slotName ?? r[0],
+              slotKind: r.slotKind ?? r[1],
+              cacheKey: r.cacheKey ?? r[2] ?? null,
+              ...(shape.keys.length > 0 ? { keys: shape.keys } : {}),
+            };
+          }),
+          consumes: consumesRows.map((r: any) => {
+            const reason: string | null = r.reason ?? r[3] ?? null;
+            const shape = parseShapeReason(reason);
+            return {
+              slotName: r.slotName ?? r[0],
+              slotKind: r.slotKind ?? r[1],
+              cacheKey: r.cacheKey ?? r[2] ?? null,
+              ...(shape.keys.length > 0 ? { accessedKeys: shape.keys } : {}),
+            };
+          }),
+        },
+      } : {}),
     };
   }
 
@@ -2167,6 +2292,109 @@ export class LocalBackend {
       frontier = nextFrontier;
     }
 
+    // ── State-slot traversal: follow PRODUCES → StateSlot → CONSUMES ──
+    // If any impacted function has a PRODUCES edge to a StateSlot, follow
+    // through to all CONSUMES consumers as additional impact targets.
+    let stateSlotImpact: Array<{
+      slotName: string;
+      slotKind: string;
+      consumers: Array<{ name: string; filePath: string; accessedKeys?: string[] }>;
+    }> = [];
+    try {
+      const impactedNames = [...new Set(impacted.map((i) => i.name).filter(Boolean))];
+      // Also include the target itself
+      const targetName = sym.name || sym[1];
+      if (targetName && !impactedNames.includes(targetName)) impactedNames.unshift(targetName);
+
+      if (impactedNames.length > 0) {
+        const nameList = impactedNames
+          .map((n) => `'${String(n).replace(/'/g, "''")}'`)
+          .join(', ');
+        // Find StateSlots that impacted functions PRODUCE to
+        const producedSlotRows = await executeQuery(
+          repo.id,
+          `
+          MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+          WHERE r.type = 'PRODUCES' AND fn.name IN [${nameList}]
+          RETURN DISTINCT s.id AS slotId, s.name AS slotName, s.slotKind AS slotKind
+        `,
+        );
+
+        if (producedSlotRows.length > 0) {
+          const slotIds = producedSlotRows
+            .map((r: any) => `'${String(r.slotId ?? r[0]).replace(/'/g, "''")}'`)
+            .join(', ');
+          // Find consumers of those StateSlots
+          const consumerRows = await executeQuery(
+            repo.id,
+            `
+            MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+            WHERE r.type = 'CONSUMES' AND s.id IN [${slotIds}]
+            RETURN s.id AS slotId, fn.id AS fnId, fn.name AS name, fn.filePath AS filePath, labels(fn)[0] AS kind, r.reason AS reason
+          `,
+          );
+
+          // Group consumers by slot and add as extra-depth impact targets
+          const consumersBySlot = new Map<string, any[]>();
+          for (const row of consumerRows) {
+            const slotId = row.slotId ?? row[0];
+            const fnId = row.fnId ?? row[1];
+            const name = row.name ?? row[2];
+            const filePath = row.filePath ?? row[3];
+            const kind = row.kind ?? row[4];
+            const reason: string | null = row.reason ?? row[5] ?? null;
+            let list = consumersBySlot.get(slotId);
+            if (!list) {
+              list = [];
+              consumersBySlot.set(slotId, list);
+            }
+
+            // Parse accessedKeys from reason
+            let accessedKeys: string[] | undefined;
+            if (reason) {
+              const keysMatch = reason.match(/\|keys:([^|]+)/);
+              if (keysMatch)
+                accessedKeys = keysMatch[1].split(',').filter((k) => k.length > 0);
+            }
+
+            list.push({ id: fnId, name, filePath, kind, accessedKeys });
+
+            // Add to impacted as extra depth level if not already visited
+            if (!visited.has(fnId)) {
+              visited.add(fnId);
+              impacted.push({
+                depth: maxDepth + 1,
+                id: fnId,
+                name,
+                type: kind,
+                filePath,
+                relationType: 'CONSUMES (via StateSlot)',
+                confidence: 0.6,
+              });
+            }
+          }
+
+          stateSlotImpact = producedSlotRows
+            .map((r: any) => {
+              const slotId = r.slotId ?? r[0];
+              const consumers = (consumersBySlot.get(slotId) || []).map((c) => ({
+                name: c.name,
+                filePath: c.filePath,
+                ...(c.accessedKeys ? { accessedKeys: c.accessedKeys } : {}),
+              }));
+              return {
+                slotName: r.slotName ?? r[1],
+                slotKind: r.slotKind ?? r[2],
+                consumers,
+              };
+            })
+            .filter((s) => s.consumers.length > 0);
+        }
+      }
+    } catch (e) {
+      logQueryError('impact:state-slot-traversal', e);
+    }
+
     const grouped: Record<number, any[]> = {};
     for (const item of impacted) {
       if (!grouped[item.depth]) grouped[item.depth] = [];
@@ -2458,6 +2686,7 @@ export class LocalBackend {
       },
       affected_processes: affectedProcesses,
       affected_modules: affectedModules,
+      ...(stateSlotImpact.length > 0 ? { stateSlotImpact } : {}),
       byDepth: grouped,
     };
   }
@@ -2838,8 +3067,24 @@ export class LocalBackend {
 
     const mismatchCount = results.filter((r) => r.status === 'MISMATCH').length;
 
+    // State-layer: query all StateSlots and append to output
+    let stateSlots: any[] = [];
+    let stateConflicts = 0;
+    let stateSuspicious = 0;
+    try {
+      const stateResult = await this.fetchStateSlotsWithEdges(repo.id, '', {});
+      stateConflicts = stateResult.conflicts;
+      stateSuspicious = stateResult.suspicious;
+      stateSlots = stateResult.slots.map(({ id: _id, filePath: _fp, ...rest }) => rest);
+    } catch { /* no StateSlot nodes — graceful degradation */ }
+
     return {
       routes: results,
+      ...(stateSlots.length > 0 ? {
+        stateSlots,
+        stateConflicts,
+        stateSuspicious,
+      } : {}),
       total: results.length,
       routesWithShapes: results.length,
       ...(mismatchCount > 0 ? { mismatches: mismatchCount } : {}),
@@ -2927,6 +3172,24 @@ export class LocalBackend {
       routes.map((r) => r.id),
     );
 
+    // Fetch all state slots for state-layer awareness
+    let allStateSlots: Awaited<ReturnType<typeof this.fetchStateSlotsWithEdges>>['slots'] = [];
+    try {
+      const stateResult = await this.fetchStateSlotsWithEdges(repo.id, '', {});
+      allStateSlots = stateResult.slots;
+    } catch { /* no StateSlot nodes — graceful degradation */ }
+
+    // Build a map: producer function name → slots they produce to
+    // This lets us find slots affected when a route's consumer also produces to a slot
+    const slotsByProducerFn = new Map<string, typeof allStateSlots>();
+    for (const slot of allStateSlots) {
+      for (const p of slot.producers) {
+        let list = slotsByProducerFn.get(p.name);
+        if (!list) { list = []; slotsByProducerFn.set(p.name, list); }
+        list.push(slot);
+      }
+    }
+
     // Count how many routes share the same handler file (for middleware partial detection)
     const routeCountByHandler = new Map<string, number>();
     for (const r of routes) {
@@ -2995,6 +3258,38 @@ export class LocalBackend {
         else if (riskLevel === 'MEDIUM') riskLevel = 'HIGH';
       }
 
+      // State-layer: find slots affected by this route's consumers
+      // A consumer that FETCHES this route may also PRODUCES to a StateSlot
+      const affectedSlotIds = new Set<string>();
+      const affectedSlots: Array<{
+        name: string;
+        slotKind: string;
+        verdict: string;
+        producers: any[];
+        consumers: any[];
+      }> = [];
+      for (const c of r.consumers) {
+        const slots = slotsByProducerFn.get(c.name) ?? [];
+        for (const slot of slots) {
+          if (affectedSlotIds.has(slot.id)) continue;
+          affectedSlotIds.add(slot.id);
+          affectedSlots.push({
+            name: slot.name,
+            slotKind: slot.slotKind,
+            verdict: slot.verdict,
+            producers: slot.producers,
+            consumers: slot.consumers,
+          });
+        }
+      }
+      const stateLayerConflicts = affectedSlots.filter((s) => s.verdict !== 'ok').length;
+
+      // Bump risk level if state-layer conflicts exist
+      if (stateLayerConflicts > 0) {
+        if (riskLevel === 'LOW') riskLevel = 'MEDIUM';
+        else if (riskLevel === 'MEDIUM') riskLevel = 'HIGH';
+      }
+
       const warning =
         consumerCount > 0
           ? `Changing response shape will affect ${consumerCount} component${consumerCount === 1 ? '' : 's'}`
@@ -3024,6 +3319,13 @@ export class LocalBackend {
         consumers,
         ...(mismatches.length > 0 ? { mismatches } : {}),
         executionFlows: flows,
+        ...(affectedSlots.length > 0 ? {
+          stateLayer: {
+            slotsAffected: affectedSlots.length,
+            conflicts: stateLayerConflicts,
+            slots: affectedSlots,
+          },
+        } : {}),
         impactSummary: {
           directConsumers: consumerCount,
           affectedFlows: flows.length,
@@ -3216,6 +3518,173 @@ export class LocalBackend {
         type: s.type || s[1],
         filePath: s.filePath || s[2],
       })),
+    };
+  }
+
+  /**
+   * Shared helper: fetch StateSlot nodes with their PRODUCES/CONSUMES edges.
+   * Returns enriched slot objects with verdict, producers, and consumers.
+   * Used by dataFlow(), shapeCheck(), and apiImpact().
+   */
+  private async fetchStateSlotsWithEdges(
+    repoId: string,
+    slotFilter: string,
+    queryParams: Record<string, any>,
+  ): Promise<{
+    slots: Array<{
+      id: string; name: string; filePath: string; slotKind: string; cacheKey: string | null;
+      verdict: 'ok' | 'suspicious' | 'conflict'; verdictReason: string;
+      producers: Array<{ name: string; filePath: string; keys?: string[]; typeName?: string; confidence?: number }>;
+      consumers: Array<{ name: string; filePath: string; accessedKeys?: string[]; confidence?: number }>;
+    }>;
+    conflicts: number;
+    suspicious: number;
+    producerFnNames: Set<string>;
+  }> {
+    const slotRows = await executeParameterized(repoId, `
+      MATCH (n:StateSlot)
+      ${slotFilter ? `WHERE ${slotFilter.replace(/^\s*AND\s*/, '')}` : ''}
+      RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.slotKind AS slotKind, n.cacheKey AS cacheKey
+    `, queryParams);
+
+    if (slotRows.length === 0) {
+      return { slots: [], conflicts: 0, suspicious: 0, producerFnNames: new Set() };
+    }
+
+    const slotIds = slotRows.map((r: any) => r.id ?? r[0]);
+
+    const [producerRows, consumerRows] = await Promise.all([
+      executeParameterized(repoId, `
+        MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'PRODUCES' AND list_contains($slotIds, s.id)
+        RETURN s.id AS slotId, fn.name AS name, fn.filePath AS filePath, r.reason AS reason
+      `, { slotIds }),
+      executeParameterized(repoId, `
+        MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'CONSUMES' AND list_contains($slotIds, s.id)
+        RETURN s.id AS slotId, fn.name AS name, fn.filePath AS filePath, r.reason AS reason
+      `, { slotIds }),
+    ]);
+
+    const producersBySlot = new Map<string, Array<{ name: string; filePath: string; keys: string[]; typeName: string | null; confidence: number }>>();
+    const consumersBySlot = new Map<string, Array<{ name: string; filePath: string; keys: string[]; confidence: number }>>();
+    const producerFnNames = new Set<string>();
+
+    for (const row of producerRows) {
+      const slotId = row.slotId ?? row[0];
+      const name = row.name ?? row[1];
+      const filePath = row.filePath ?? row[2];
+      const reason: string | null = row.reason ?? row[3] ?? null;
+      const shape = parseShapeReason(reason);
+      producerFnNames.add(name);
+      let list = producersBySlot.get(slotId);
+      if (!list) { list = []; producersBySlot.set(slotId, list); }
+      list.push({ name, filePath, keys: shape.keys, typeName: shape.typeName, confidence: shape.confidence });
+    }
+
+    for (const row of consumerRows) {
+      const slotId = row.slotId ?? row[0];
+      const name = row.name ?? row[1];
+      const filePath = row.filePath ?? row[2];
+      const reason: string | null = row.reason ?? row[3] ?? null;
+      const shape = parseShapeReason(reason);
+      let list = consumersBySlot.get(slotId);
+      if (!list) { list = []; consumersBySlot.set(slotId, list); }
+      list.push({ name, filePath, keys: shape.keys, confidence: shape.confidence });
+    }
+
+    let conflictCount = 0;
+    let suspiciousCount = 0;
+
+    const slots = slotRows.map((row: any) => {
+      const id = row.id ?? row[0];
+      const name = row.name ?? row[1];
+      const filePath = row.filePath ?? row[2];
+      const slotKind = row.slotKind ?? row[3];
+      const cacheKey = row.cacheKey ?? row[4] ?? null;
+
+      const producers = producersBySlot.get(id) || [];
+      const consumers = consumersBySlot.get(id) || [];
+      const verdict = computeShapeVerdict(producers, consumers);
+
+      let verdictReason = '';
+      if (verdict === 'conflict') {
+        conflictCount++;
+        verdictReason = 'Multiple producers write different shapes to this slot.';
+      } else if (verdict === 'suspicious') {
+        suspiciousCount++;
+        const allProducedKeys = new Set<string>();
+        for (const p of producers) for (const k of p.keys) allProducedKeys.add(k);
+        const missingKeys: string[] = [];
+        for (const c of consumers) for (const k of c.keys) if (!allProducedKeys.has(k)) missingKeys.push(k);
+        verdictReason = `Consumer accesses keys not found in any producer: ${[...new Set(missingKeys)].join(', ')}`;
+      }
+
+      return {
+        id,
+        name,
+        filePath,
+        slotKind,
+        cacheKey,
+        verdict,
+        verdictReason,
+        producers: producers.map(p => ({
+          name: p.name,
+          filePath: p.filePath,
+          ...(p.keys.length > 0 ? { keys: p.keys } : {}),
+          ...(p.typeName ? { typeName: p.typeName } : {}),
+          ...(p.confidence > 0 ? { confidence: p.confidence } : {}),
+        })),
+        consumers: consumers.map(c => ({
+          name: c.name,
+          filePath: c.filePath,
+          ...(c.keys.length > 0 ? { accessedKeys: c.keys } : {}),
+          ...(c.confidence > 0 ? { confidence: c.confidence } : {}),
+        })),
+      };
+    });
+
+    return { slots, conflicts: conflictCount, suspicious: suspiciousCount, producerFnNames };
+  }
+
+  private async dataFlow(repo: RepoHandle, params: { query?: string; slotKind?: string; mismatchesOnly?: string | boolean }): Promise<any> {
+    await this.ensureInitialized(repo.id);
+
+    // Build optional filters
+    let slotFilter = '';
+    const queryParams: Record<string, string> = {};
+    if (params.query) {
+      slotFilter += ` AND n.name CONTAINS $query`;
+      queryParams.query = params.query;
+    }
+    if (params.slotKind) {
+      slotFilter += ` AND n.slotKind = $slotKind`;
+      queryParams.slotKind = params.slotKind;
+    }
+
+    const result = await this.fetchStateSlotsWithEdges(repo.id, slotFilter, queryParams);
+
+    if (result.slots.length === 0) {
+      return { slots: [], total: 0, conflicts: 0, suspicious: 0, message: params.query ? `No state slots matching "${params.query}"` : 'No state slots found in this project.' };
+    }
+
+    // Strip internal id and verdictReason fields for data_flow output (matches original format)
+    const slots = result.slots.map(({ id: _id, verdictReason: _vr, cacheKey, ...rest }) => ({
+      ...rest,
+      ...(cacheKey ? { cacheKey } : {}),
+    }));
+
+    // Filter if mismatchesOnly (MCP sends strings, so check both)
+    const filterMismatches = params.mismatchesOnly === true || params.mismatchesOnly === 'true';
+    const filtered = filterMismatches
+      ? slots.filter((s: any) => s.verdict !== 'ok')
+      : slots;
+
+    return {
+      slots: filtered,
+      total: filtered.length,
+      conflicts: result.conflicts,
+      suspicious: result.suspicious,
     };
   }
 
