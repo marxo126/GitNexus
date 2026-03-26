@@ -74,6 +74,8 @@ export interface CobolRegexResults {
   programMetadata: {
     author?: string;
     dateWritten?: string;
+    dateCompiled?: string;
+    installation?: string;
   };
 
   // Phase 2: EXEC blocks
@@ -156,6 +158,9 @@ export interface CobolRegexResults {
     line: number;
     caller: string | null;
   }>;
+
+  // Phase 4.1: INITIALIZE
+  initializes: Array<{ target: string; line: number; caller: string | null }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +249,8 @@ const RE_PROGRAM_ID = /\bPROGRAM-ID\.\s*([A-Z][A-Z0-9-]*)(?:\s+IS\s+COMMON)?/i;
 const RE_END_PROGRAM = /\bEND\s+PROGRAM\s+([A-Z][A-Z0-9-]*)\s*\./i;
 const RE_AUTHOR = /^\s+AUTHOR\.\s*(.+)/i;
 const RE_DATE_WRITTEN = /^\s+DATE-WRITTEN\.\s*(.+)/i;
+const RE_DATE_COMPILED = /^\s+DATE-COMPILED\.\s*(.+)/i;
+const RE_INSTALLATION = /^\s+INSTALLATION\.\s*(.+)/i;
 
 // ENVIRONMENT DIVISION — SELECT
 const RE_SELECT_START = /\bSELECT\s+(?:OPTIONAL\s+)?([A-Z][A-Z0-9-]+)/i;
@@ -301,6 +308,9 @@ const RE_USE_AFTER = /\bUSE\s+(?:AFTER\s+)?(?:STANDARD\s+)?(?:EXCEPTION|ERROR)\s
 // SET statement (condition, index)
 const RE_SET_TO_TRUE = /\bSET\s+((?:[A-Z][A-Z0-9-]+(?:\s+OF\s+[A-Z][A-Z0-9-]+)?\s+)+)TO\s+TRUE\b/i;
 const RE_SET_INDEX = /\bSET\s+((?:[A-Z][A-Z0-9-]+\s+)+)(TO|UP\s+BY|DOWN\s+BY)\s+(\d+|[A-Z][A-Z0-9-]+)/i;
+
+// INITIALIZE statement — data reset
+const RE_INITIALIZE = /\bINITIALIZE\s+([A-Z][A-Z0-9-]+)/i;
 
 // EXEC DLI (IMS/DB)
 const RE_EXEC_DLI_START = /\bEXEC\s+DLI\b/i;
@@ -789,6 +799,7 @@ export function extractCobolSymbolsWithRegex(
     declaratives: [],
     sets: [],
     inspects: [],
+    initializes: [],
   };
 
   // --- State ---
@@ -1211,6 +1222,17 @@ export function extractCobolSymbolsWithRegex(
     const dateMatch = line.match(RE_DATE_WRITTEN);
     if (dateMatch) {
       result.programMetadata.dateWritten = dateMatch[1].replace(/\.\s*$/, '').trim();
+      return;
+    }
+
+    const compMatch = line.match(RE_DATE_COMPILED);
+    if (compMatch) {
+      result.programMetadata.dateCompiled = compMatch[1].replace(/\.\s*$/, '').trim();
+      return;
+    }
+    const instMatch = line.match(RE_INSTALLATION);
+    if (instMatch) {
+      result.programMetadata.installation = instMatch[1].replace(/\.\s*$/, '').trim();
     }
   }
 
@@ -1618,6 +1640,12 @@ export function extractCobolSymbolsWithRegex(
           : 'down-by' as const;
         result.sets.push({ targets, form, value: setIdxMatch[3], line: lineNum, caller: currentParagraph });
       }
+    }
+
+    // INITIALIZE — data reset
+    const initMatch = line.match(RE_INITIALIZE);
+    if (initMatch) {
+      result.initializes.push({ target: initMatch[1], line: lineNum, caller: currentParagraph });
     }
   }
 }

@@ -61,6 +61,7 @@ export interface CobolProcessResult {
   declaratives: number;
   sets: number;
   inspects: number;
+  initializes: number;
 }
 
 /** Returns true if the file is a COBOL or copybook file. */
@@ -114,6 +115,7 @@ export const processCobol = (
     declaratives: 0,
     sets: 0,
     inspects: 0,
+    initializes: 0,
   };
 
   // ── 1. Separate programs, copybooks, and JCL ───────────────────────
@@ -195,6 +197,7 @@ export const processCobol = (
     result.declaratives += extracted.declaratives.length;
     result.sets += extracted.sets.length;
     result.inspects += extracted.inspects.length;
+    result.initializes += extracted.initializes.length;
   }
 
   // ── 4. Second pass: resolve cross-program CALL targets ─────────────
@@ -310,6 +313,8 @@ function mapToGraph(
     const metaDesc = [
       extracted.programMetadata.author && `author:${extracted.programMetadata.author}`,
       extracted.programMetadata.dateWritten && `date:${extracted.programMetadata.dateWritten}`,
+      extracted.programMetadata.dateCompiled && `compiled:${extracted.programMetadata.dateCompiled}`,
+      extracted.programMetadata.installation && `install:${extracted.programMetadata.installation}`,
     ].filter(Boolean).join(' ');
     graph.addNode({
       id: moduleId,
@@ -1018,6 +1023,22 @@ function mapToGraph(
           reason: 'cobol-inspect-tally',
         });
       }
+    }
+  }
+
+  // ── INITIALIZE -> ACCESSES write edges ──────────────────
+  for (const init of extracted.initializes) {
+    const callerId = scopedCallerLookup(init.caller, init.line);
+    const targetPropId = dataItemMap.get(init.target.toUpperCase());
+    if (targetPropId) {
+      graph.addRelationship({
+        id: generateId('ACCESSES', `${callerId}->initialize->${init.target}:L${init.line}`),
+        type: 'ACCESSES',
+        sourceId: callerId,
+        targetId: targetPropId,
+        confidence: 0.9,
+        reason: 'cobol-initialize',
+      });
     }
   }
 
