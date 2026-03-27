@@ -71,6 +71,11 @@ export type NodeProperties = {
   // Section-specific (markdown heading level, 1-6)
   level?: number,
   returnType?: string,
+  // Field/property metadata (populated by FieldExtractor)
+  declaredType?: string,
+  visibility?: string,       // 'public' | 'private' | 'protected' | 'internal' etc.
+  isStatic?: boolean,
+  isReadonly?: boolean,
   // Response shape (top-level keys from NextResponse.json({...}) / res.json({...}))
   responseKeys?: string[],
   // Error response shape (top-level keys from .json() calls with status >= 400)
@@ -141,4 +146,5 @@ export interface KnowledgeGraph {
   addRelationship: (relationship: GraphRelationship) => void,
   removeNode: (nodeId: string) => boolean,
   removeNodesByFile: (filePath: string) => number,
+  removeRelationship: (relationshipId: string) => boolean,
 }
