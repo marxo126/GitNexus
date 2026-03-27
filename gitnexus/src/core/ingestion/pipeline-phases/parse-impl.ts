@@ -68,6 +68,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDev } from '../utils/env.js';
 import { synthesizeWildcardImportBindings, needsSynthesis } from './wildcard-synthesis.js';
 import { extractORMQueriesInline } from './orm-extraction.js';
+import {
+  extractWebhooks,
+  type ExtractedWebhook,
+} from '../workers/parse-worker.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -106,6 +110,7 @@ export async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allWebhooks: ExtractedWebhook[];
   bindingAccumulator: BindingAccumulator;
   resolutionContext: ReturnType<typeof createResolutionContext>;
   usedWorkerPool: boolean;
@@ -248,6 +253,7 @@ export async function runChunkedParseAndResolve(
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allWebhooks: ExtractedWebhook[] = [];
   const deferredWorkerCalls: ExtractedCall[] = [];
   const deferredWorkerHeritage: ExtractedHeritage[] = [];
   const deferredConstructorBindings: FileConstructorBindings[] = [];
@@ -393,6 +399,9 @@ export async function runChunkedParseAndResolve(
         if (chunkWorkerData.ormQueries?.length) {
           for (const item of chunkWorkerData.ormQueries) allORMQueries.push(item);
         }
+        if (chunkWorkerData.webhooks?.length) {
+          for (const item of chunkWorkerData.webhooks) allWebhooks.push(item);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -509,6 +518,7 @@ export async function runChunkedParseAndResolve(
       }
       for (const f of chunkFiles) {
         extractORMQueriesInline(f.path, f.content, allORMQueries);
+        extractWebhooks(f.path, f.content, allWebhooks);
       }
       astCache.clear();
       cachedSequentialChunkFiles[chunkIdx] = [];
@@ -589,6 +599,7 @@ export async function runChunkedParseAndResolve(
     allDecoratorRoutes,
     allToolDefs,
     allORMQueries,
+    allWebhooks,
     bindingAccumulator,
     resolutionContext: ctx,
     // Whether a worker pool was actually live for this run. False means the

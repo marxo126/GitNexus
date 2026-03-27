@@ -15,6 +15,7 @@ export { parsePhase, type ParseOutput } from './parse.js';
 export { routesPhase, type RoutesOutput, type RouteEntry } from './routes.js';
 export { toolsPhase, type ToolsOutput, type ToolDef } from './tools.js';
 export { ormPhase, type ORMOutput } from './orm.js';
+export { webhookPhase, type WebhookOutput } from './webhook.js';
 export { crossFilePhase, type CrossFileOutput } from './cross-file.js';
 export { mroPhase, type MROOutput } from './mro.js';
 export { communitiesPhase, type CommunitiesOutput } from './communities.js';
