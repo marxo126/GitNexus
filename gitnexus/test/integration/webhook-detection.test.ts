@@ -10,10 +10,9 @@
  * Part A: Detection logic against test/fixtures/webhook-repo/ file contents
  * Part B: Seed-based LadybugDB persistence + webhook_map tool dispatch
  *
- * NOTE: Part A tests extractWebhooks directly rather than via runPipelineFromRepo
- * because the pipeline only spawns workers (which run extractWebhooks) for repos
- * with >= 15 files or >= 512KB of source. The 3-file fixture falls below both
- * thresholds, triggering the sequential fallback which doesn't extract webhooks.
+ * NOTE: Part A tests extractWebhooks directly against fixture files for fast,
+ * isolated validation. The pipeline calls extractWebhooks in both the worker
+ * path AND the sequential fallback path (for repos with <15 files / <512KB).
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import fs from 'fs';
