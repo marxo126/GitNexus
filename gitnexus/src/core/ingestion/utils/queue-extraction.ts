@@ -9,13 +9,13 @@ import type { ExtractedQueuePattern } from '../workers/parse-worker.js';
 // ---------------------------------------------------------------------------
 
 /** Matches `const q = new Queue('orders')` -- captures var name + queue name */
-const BULLMQ_QUEUE_DECL_RE = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['"](\w[\w-]*)['"]/g;
+const BULLMQ_QUEUE_DECL_RE = /(?:const|let|var)\s+(\w+)\s*=\s*new\s+Queue\s*\(\s*['"]([\w][\w:.-]*)['"]/g;
 
 /** Matches `q.add(...)` or `q.addBulk(...)` -- captures var name + method */
 const BULLMQ_ADD_RE = /(\w+)\.(add|addBulk)\s*\(/g;
 
 /** Matches `new Worker('orders', ...)` -- captures queue name */
-const BULLMQ_WORKER_RE = /new\s+Worker\s*\(\s*['"](\w[\w-]*)['"]/g;
+const BULLMQ_WORKER_RE = /new\s+Worker\s*\(\s*['"]([\w][\w:.-]*)['"]/g;
 
 // ---------------------------------------------------------------------------
 // Temporal regexes (more specific to avoid false positives)
@@ -45,12 +45,27 @@ const TEMPORAL_ACTIVITY_CALL_RE = /activities\.(\w+)\s*\(/g;
 // Line number helper
 // ---------------------------------------------------------------------------
 
-function lineAt(content: string, index: number): number {
-  let count = 0;
-  for (let i = 0; i < index; i++) {
-    if (content.charCodeAt(i) === 10) count++;
+/**
+ * Build a sorted array of newline offsets so lineAt lookups are O(log n)
+ * via binary search instead of O(n) per call.
+ */
+function buildLineOffsets(content: string): number[] {
+  const offsets: number[] = [];
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 10) offsets.push(i);
   }
-  return count;
+  return offsets;
+}
+
+function lineAt(offsets: number[], index: number): number {
+  let lo = 0;
+  let hi = offsets.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (offsets[mid] < index) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +85,8 @@ export function extractQueuePatterns(
   const hasTemporal = content.includes('proxyActivities') || content.includes('client.workflow.');
 
   if (!hasBullMQ && !hasTemporal) return;
+
+  const offsets = buildLineOffsets(content);
 
   // --- BullMQ ---
   if (hasBullMQ) {
@@ -91,7 +108,7 @@ export function extractQueuePatterns(
           role: 'producer',
           queueName: qn,
           method: m[2],
-          lineNumber: lineAt(content, m.index),
+          lineNumber: lineAt(offsets, m.index),
         });
       }
     }
@@ -103,7 +120,7 @@ export function extractQueuePatterns(
         filePath,
         role: 'consumer',
         queueName: m[1],
-        lineNumber: lineAt(content, m.index),
+        lineNumber: lineAt(offsets, m.index),
       });
     }
   }
@@ -131,7 +148,7 @@ export function extractQueuePatterns(
           queueName: taskQueueName,
           method: startMethod,
           handlerName: workflowFnName,
-          lineNumber: lineAt(content, m.index),
+          lineNumber: lineAt(offsets, m.index),
         });
       }
     }
@@ -146,7 +163,7 @@ export function extractQueuePatterns(
           role: 'producer',  // activity invocation dispatches work to task queue
           queueName: m[1],
           handlerName: m[1],
-          lineNumber: lineAt(content, m.index),
+          lineNumber: lineAt(offsets, m.index),
         });
       }
     }
