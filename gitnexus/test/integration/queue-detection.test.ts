@@ -46,6 +46,38 @@ describe('Queue Detection', () => {
     expect(queueNames).toContain('orders');
   });
 
+  it('detects colon-namespaced BullMQ queue names', () => {
+    const queueNodes: any[] = [];
+    graph.forEachNode((n: any) => {
+      if (n.label === 'CodeElement' && n.properties?.description?.startsWith('Queue:')) {
+        queueNodes.push(n);
+      }
+    });
+    const queueNames = queueNodes.map((n: any) => n.properties.name);
+    expect(queueNames).toContain('payments:high-priority');
+  });
+
+  it('creates ENQUEUES edge for colon-namespaced producer', () => {
+    const enqueues: any[] = [];
+    graph.forEachRelationship((r: any) => { if (r.type === 'ENQUEUES') enqueues.push(r); });
+    // The target node of the ENQUEUES edge should be the colon-namespaced queue
+    const targetNames = enqueues.map((r: any) => {
+      const target = graph.getNode(r.targetId);
+      return target?.properties?.name;
+    });
+    expect(targetNames).toContain('payments:high-priority');
+  });
+
+  it('creates PROCESSES edge for colon-namespaced consumer', () => {
+    const processes: any[] = [];
+    graph.forEachRelationship((r: any) => { if (r.type === 'PROCESSES') processes.push(r); });
+    const targetNames = processes.map((r: any) => {
+      const target = graph.getNode(r.targetId);
+      return target?.properties?.name;
+    });
+    expect(targetNames).toContain('payments:high-priority');
+  });
+
   it('uses proxyActivities guard for Temporal activity detection', () => {
     // workflow.ts has proxyActivities + activities.validateOrder etc.
     // These should create ENQUEUES edges (producer role, not 'activity' role)
