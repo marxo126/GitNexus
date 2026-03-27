@@ -89,4 +89,33 @@ describe('shape_check integration', () => {
     expect(keys).toContain('data');
     expect(keys).toContain('error');
   });
+
+  // --- Regression: DOM-like field names must not be blocklisted ---
+
+  it('creates Route node for /api/links with DOM-like field names in responseKeys', () => {
+    const routes = getNodesByLabelFull(result, 'Route');
+    const linksRoute = routes.find(r => r.name === '/api/links');
+    expect(linksRoute).toBeDefined();
+    expect(linksRoute!.properties.responseKeys).toBeDefined();
+    expect(linksRoute!.properties.responseKeys).toContain('type');
+    expect(linksRoute!.properties.responseKeys).toContain('href');
+    expect(linksRoute!.properties.responseKeys).toContain('target');
+    expect(linksRoute!.properties.responseKeys).toContain('label');
+  });
+
+  it('consumer accessedKeys include DOM-like field names when accessing API data', () => {
+    const edges = getRelationships(result, 'FETCHES');
+    const linksFetch = edges.find(e =>
+      e.sourceFilePath.includes('LinkList') && e.target === '/api/links',
+    );
+    expect(linksFetch).toBeDefined();
+    const keysStr = linksFetch!.rel.reason!.match(/keys:([^|]+)/)?.[1] ?? '';
+    const keys = keysStr.split(',');
+    // These field names overlap with DOM properties but must NOT be filtered
+    // by the blocklist when accessed on data variables (data.type, data.href, etc.)
+    expect(keys).toContain('type');
+    expect(keys).toContain('href');
+    expect(keys).toContain('target');
+    expect(keys).toContain('label');
+  });
 });

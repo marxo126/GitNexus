@@ -28,12 +28,9 @@ describe('extractResponseShapes', () => {
     expect(result.responseKeys).toContain('count');
   });
 
-  it('extracts backtick-quoted property keys from .json() call', () => {
-    const content = 'return NextResponse.json({ `users`: data, `total`: count });';
-    const result = extractResponseShapes(content);
-    expect(result.responseKeys).toContain('users');
-    expect(result.responseKeys).toContain('total');
-  });
+  // Backtick-quoted property keys (e.g. { `users`: data }) are not valid JS object literal syntax.
+  // Template literals as computed keys use [] syntax: { [`key`]: val }.
+  // No test for backtick keys since the pattern never appears in real code.
 
   it('classifies error keys by status code', () => {
     const content = `
