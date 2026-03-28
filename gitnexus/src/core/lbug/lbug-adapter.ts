@@ -346,9 +346,9 @@ const fallbackRelationshipInserts = async (
   for (let i = 1; i < validRelLines.length; i++) {
     const line = validRelLines[i];
     try {
-      const match = line.match(/"([^"]*)","([^"]*)","([^"]*)",([0-9.]+),"([^"]*)",([0-9-]+)/);
+      const match = line.match(/"([^"]*)","([^"]*)","([^"]*)",([0-9.]+),"([^"]*)",([0-9-]+)(?:,"([^"]*)")?/);
       if (!match) continue;
-      const [, fromId, toId, relType, confidenceStr, reason, stepStr] = match;
+      const [, fromId, toId, relType, confidenceStr, reason, stepStr, guard] = match;
       const fromLabel = getNodeLabel(fromId);
       const toLabel = getNodeLabel(toId);
       if (!validTables.has(fromLabel) || !validTables.has(toLabel)) continue;
@@ -357,10 +357,11 @@ const fallbackRelationshipInserts = async (
       const step = parseInt(stepStr) || 0;
 
       const esc = (s: string) => s.replace(/'/g, "''").replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      const guardProp = guard ? `, guard: '${esc(guard)}'` : '';
       await conn.query(`
         MATCH (a:${escapeLabel(fromLabel)} {id: '${esc(fromId)}' }),
               (b:${escapeLabel(toLabel)} {id: '${esc(toId)}' })
-        CREATE (a)-[:${REL_TABLE_NAME} {type: '${esc(relType)}', confidence: ${confidence}, reason: '${esc(reason)}', step: ${step}}]->(b)
+        CREATE (a)-[:${REL_TABLE_NAME} {type: '${esc(relType)}', confidence: ${confidence}, reason: '${esc(reason)}', step: ${step}${guardProp}}]->(b)
       `);
     } catch {
       // skip
@@ -369,7 +370,7 @@ const fallbackRelationshipInserts = async (
 };
 
 /** Tables with isExported column (TypeScript/JS-native types) */
-const TABLES_WITH_EXPORTED = new Set<string>(['Function', 'Class', 'Interface', 'Method', 'CodeElement']);
+const TABLES_WITH_EXPORTED = new Set<string>(['Class', 'Interface', 'CodeElement']);
 
 const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   const t = escapeTableName(table);
@@ -394,8 +395,11 @@ const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'Function') {
+    return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, guardClauses) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   if (table === 'Method') {
-    return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+    return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType, guardClauses) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   // TypeScript/JS code element tables have isExported; multi-language tables do not
   if (TABLES_WITH_EXPORTED.has(table)) {
