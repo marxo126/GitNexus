@@ -54,7 +54,7 @@ export function buildSourceSinkPaths(
   callsGraph: Map<string, string[]>,
   maxDepth: number = 5,
 ): SourceSinkPath[] {
-  const sinkMap = new Map(sinks.map(s => [s.id, s]));
+  const sinkMap = new Map(sinks.map((s) => [s.id, s]));
   const results: SourceSinkPath[] = [];
 
   for (const source of sources) {

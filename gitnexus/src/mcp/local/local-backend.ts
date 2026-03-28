@@ -3221,16 +3221,21 @@ export class LocalBackend {
     };
   }
 
-  private async sourceSinkScan(repo: RepoHandle, params: {
-    max_depth?: number;
-    owasp?: string;
-    source_category?: string;
-  }): Promise<any> {
+  private async sourceSinkScan(
+    repo: RepoHandle,
+    params: {
+      max_depth?: number;
+      owasp?: string;
+      source_category?: string;
+    },
+  ): Promise<any> {
     await this.ensureInitialized(repo.id);
     const maxDepth = params.max_depth ?? 5;
 
     // Step 1: Find all Function and Method nodes with their content.
-    const nodesResult = await executeQuery(repo.id, `
+    const nodesResult = await executeQuery(
+      repo.id,
+      `
       MATCH (n:Function)
       WHERE n.id IS NOT NULL
       RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.content AS content
@@ -3238,7 +3243,8 @@ export class LocalBackend {
       MATCH (n:Method)
       WHERE n.id IS NOT NULL
       RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.content AS content
-    `);
+    `,
+    );
 
     // Step 2: Load user-defined catalog extensions (if any) and merge with built-in catalogs
     const {
@@ -3308,10 +3314,13 @@ export class LocalBackend {
     }
 
     // Step 4: Build CALLS adjacency map via Cypher
-    const callsResult = await executeQuery(repo.id, `
+    const callsResult = await executeQuery(
+      repo.id,
+      `
       MATCH (a)-[r:CodeRelation {type: 'CALLS'}]->(b)
       RETURN a.id AS sourceId, b.id AS targetId
-    `);
+    `,
+    );
 
     const callsGraph = new Map<string, string[]>();
     for (const row of callsResult) {

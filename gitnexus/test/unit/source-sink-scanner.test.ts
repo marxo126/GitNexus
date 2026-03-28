@@ -10,11 +10,11 @@ import {
   getMatchingSinks,
   type UserSecurityConfig,
 } from '../../src/security/catalogs.js';
-import { buildSourceSinkPaths, type SourceSinkPath } from '../../src/security/source-sink-scanner.js';
+import { buildSourceSinkPaths } from '../../src/security/source-sink-scanner.js';
 
 describe('SOURCE_CATALOG', () => {
   it('contains user input sources', () => {
-    const names = SOURCE_CATALOG.map(s => s.pattern);
+    const names = SOURCE_CATALOG.map((s) => s.pattern);
     expect(names).toContain('request.json');
     expect(names).toContain('req.body');
     expect(names).toContain('request.GET');
@@ -27,7 +27,7 @@ describe('SOURCE_CATALOG', () => {
   });
 
   it('contains Go sources', () => {
-    const patterns = SOURCE_CATALOG.map(s => s.pattern);
+    const patterns = SOURCE_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('r.Body');
     expect(patterns).toContain('r.URL.Query()');
     expect(patterns).toContain('r.FormValue');
@@ -35,26 +35,26 @@ describe('SOURCE_CATALOG', () => {
   });
 
   it('contains Rust/Actix sources', () => {
-    const patterns = SOURCE_CATALOG.map(s => s.pattern);
+    const patterns = SOURCE_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('web::Json');
     expect(patterns).toContain('web::Query');
     expect(patterns).toContain('web::Path');
   });
 
   it('contains Spring annotation sources', () => {
-    const patterns = SOURCE_CATALOG.map(s => s.pattern);
+    const patterns = SOURCE_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('@RequestBody');
     expect(patterns).toContain('@RequestParam');
     expect(patterns).toContain('@PathVariable');
   });
 
   it('contains Rails sources', () => {
-    const patterns = SOURCE_CATALOG.map(s => s.pattern);
+    const patterns = SOURCE_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('params[');
   });
 
   it('contains Ktor sources', () => {
-    const patterns = SOURCE_CATALOG.map(s => s.pattern);
+    const patterns = SOURCE_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('call.receive');
     expect(patterns).toContain('call.parameters');
   });
@@ -62,7 +62,7 @@ describe('SOURCE_CATALOG', () => {
 
 describe('SINK_CATALOG', () => {
   it('contains dangerous sinks', () => {
-    const names = SINK_CATALOG.map(s => s.pattern);
+    const names = SINK_CATALOG.map((s) => s.pattern);
     expect(names).toContain('eval');
     expect(names).toContain('exec');
     expect(names).toContain('innerHTML');
@@ -75,26 +75,26 @@ describe('SINK_CATALOG', () => {
   });
 
   it('contains Go sinks', () => {
-    const patterns = SINK_CATALOG.map(s => s.pattern);
+    const patterns = SINK_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('os.exec');
     expect(patterns).toContain('sql.Query');
     expect(patterns).toContain('template.HTML');
   });
 
   it('contains Rust sinks', () => {
-    const patterns = SINK_CATALOG.map(s => s.pattern);
+    const patterns = SINK_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('Command::new');
     expect(patterns).toContain('sqlx::query');
   });
 
   it('contains Spring sinks', () => {
-    const patterns = SINK_CATALOG.map(s => s.pattern);
+    const patterns = SINK_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('jdbcTemplate.query');
     expect(patterns).toContain('Runtime.exec');
   });
 
   it('contains Rails sinks', () => {
-    const patterns = SINK_CATALOG.map(s => s.pattern);
+    const patterns = SINK_CATALOG.map((s) => s.pattern);
     expect(patterns).toContain('system(');
     expect(patterns).toContain('ActiveRecord::Base.connection.execute');
   });
@@ -170,7 +170,12 @@ describe('mergeCatalogs', () => {
   it('merges user-defined sinks with built-in catalog', () => {
     const userConfig: UserSecurityConfig = {
       sinks: [
-        { pattern: 'dangerousOp', owasp: 'A03-injection', severity: 'high', description: 'Custom sink' },
+        {
+          pattern: 'dangerousOp',
+          owasp: 'A03-injection',
+          severity: 'high',
+          description: 'Custom sink',
+        },
       ],
     };
     const result = mergeCatalogs(userConfig);
@@ -184,7 +189,12 @@ describe('mergeCatalogs', () => {
         { pattern: 'myCustomInput', category: 'user_input', description: 'Custom input source' },
       ],
       sinks: [
-        { pattern: 'dangerousOp', owasp: 'A03-injection', severity: 'high', description: 'Custom sink' },
+        {
+          pattern: 'dangerousOp',
+          owasp: 'A03-injection',
+          severity: 'high',
+          description: 'Custom sink',
+        },
       ],
     };
     const merged = mergeCatalogs(userConfig);
@@ -194,11 +204,11 @@ describe('mergeCatalogs', () => {
     // User-defined source should be detected
     const content = `function handle() { const data = myCustomInput(); dangerousOp(data); }`;
     const matchedSources = getMatchingSources(content, undefined, compiledSources);
-    expect(matchedSources.some(s => s.pattern === 'myCustomInput')).toBe(true);
+    expect(matchedSources.some((s) => s.pattern === 'myCustomInput')).toBe(true);
 
     // User-defined sink should be detected
     const matchedSinks = getMatchingSinks(content, undefined, compiledSinks);
-    expect(matchedSinks.some(s => s.pattern === 'dangerousOp')).toBe(true);
+    expect(matchedSinks.some((s) => s.pattern === 'dangerousOp')).toBe(true);
   });
 
   it('does not modify built-in catalog arrays', () => {
@@ -215,8 +225,23 @@ describe('mergeCatalogs', () => {
 
 describe('buildSourceSinkPaths', () => {
   it('finds path from source to sink through CALLS chain', () => {
-    const sources = [{ id: 'func:handlePOST', name: 'handlePOST', filePath: 'route.ts', sourcePatterns: ['req.body'] }];
-    const sinks = [{ id: 'func:createGrant', name: 'createGrant', filePath: 'service.ts', sinkPatterns: ['prisma.'], owasp: 'A03-injection' as const }];
+    const sources = [
+      {
+        id: 'func:handlePOST',
+        name: 'handlePOST',
+        filePath: 'route.ts',
+        sourcePatterns: ['req.body'],
+      },
+    ];
+    const sinks = [
+      {
+        id: 'func:createGrant',
+        name: 'createGrant',
+        filePath: 'service.ts',
+        sinkPatterns: ['prisma.'],
+        owasp: 'A03-injection' as const,
+      },
+    ];
     const callsGraph = new Map([
       ['func:handlePOST', ['func:validateInput']],
       ['func:validateInput', ['func:createGrant']],
@@ -232,7 +257,15 @@ describe('buildSourceSinkPaths', () => {
 
   it('returns empty when no path exists', () => {
     const sources = [{ id: 'func:a', name: 'a', filePath: 'a.ts', sourcePatterns: ['req.body'] }];
-    const sinks = [{ id: 'func:z', name: 'z', filePath: 'z.ts', sinkPatterns: ['eval'], owasp: 'A03-injection' as const }];
+    const sinks = [
+      {
+        id: 'func:z',
+        name: 'z',
+        filePath: 'z.ts',
+        sinkPatterns: ['eval'],
+        owasp: 'A03-injection' as const,
+      },
+    ];
     const callsGraph = new Map([
       ['func:a', ['func:b']],
       // func:b doesn't call func:z
@@ -244,7 +277,15 @@ describe('buildSourceSinkPaths', () => {
 
   it('respects maxDepth', () => {
     const sources = [{ id: 'func:a', name: 'a', filePath: 'a.ts', sourcePatterns: ['req.body'] }];
-    const sinks = [{ id: 'func:d', name: 'd', filePath: 'd.ts', sinkPatterns: ['eval'], owasp: 'A03-injection' as const }];
+    const sinks = [
+      {
+        id: 'func:d',
+        name: 'd',
+        filePath: 'd.ts',
+        sinkPatterns: ['eval'],
+        owasp: 'A03-injection' as const,
+      },
+    ];
     const callsGraph = new Map([
       ['func:a', ['func:b']],
       ['func:b', ['func:c']],
