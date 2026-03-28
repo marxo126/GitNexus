@@ -19,8 +19,8 @@ const GROUP_TOOLS = new Set([
 ]);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(16);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 1 source_sink + 5 group)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(17);
   });
 
   it('contains all expected tool names', () => {
@@ -35,6 +35,7 @@ describe('GITNEXUS_TOOLS', () => {
         'rename',
         'impact',
         'api_impact',
+        'source_sink',
       ]),
     );
   });

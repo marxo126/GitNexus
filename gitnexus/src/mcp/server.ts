@@ -72,6 +72,9 @@ function getNextStepHint(toolName: string, args: Record<string, any> | undefined
     case 'overview':
       return `\n\n---\n**Next:** To drill into an area, READ gitnexus://repo/${repoPath}/cluster/{name}. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
 
+    case 'source_sink':
+      return '\n\n---\n**Next:** Use context() on flagged source or sink functions to understand the full call chain and check for sanitizers.';
+
     default:
       return '';
   }
