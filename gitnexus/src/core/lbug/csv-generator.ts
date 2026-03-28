@@ -199,6 +199,19 @@ class BufferedCSVWriter {
 // STREAMING CSV GENERATION — SINGLE PASS
 // ============================================================================
 
+/**
+ * Serialize guard clauses array to a string for CSV storage.
+ * Format: JSON array of "condition:status" strings.
+ */
+const serializeGuardClauses = (guards: { condition: string; returnStatus?: number; line: number }[]): string => {
+  if (!guards || guards.length === 0) return '';
+  return JSON.stringify(guards.map(g => ({
+    condition: g.condition,
+    ...(g.returnStatus ? { status: g.returnStatus } : {}),
+    line: g.line,
+  })));
+};
+
 export interface StreamedCSVResult {
   nodeFiles: Map<NodeTableName, { csvPath: string; rows: number }>;
   relCsvPath: string;
@@ -235,9 +248,11 @@ export const streamAllCSVsToDisk = async (
   );
   const folderWriter = new BufferedCSVWriter(path.join(csvDir, 'folder.csv'), 'id,name,filePath');
   const codeElementHeader = 'id,name,filePath,startLine,endLine,isExported,content,description';
+  const functionHeader =
+    'id,name,filePath,startLine,endLine,isExported,content,description,guardClauses';
   const functionWriter = new BufferedCSVWriter(
     path.join(csvDir, 'function.csv'),
-    codeElementHeader,
+    functionHeader,
   );
   const classWriter = new BufferedCSVWriter(path.join(csvDir, 'class.csv'), codeElementHeader);
   const interfaceWriter = new BufferedCSVWriter(
@@ -245,7 +260,7 @@ export const streamAllCSVsToDisk = async (
     codeElementHeader,
   );
   const methodHeader =
-    'id,name,filePath,startLine,endLine,isExported,content,description,parameterCount,returnType';
+    'id,name,filePath,startLine,endLine,isExported,content,description,parameterCount,returnType,guardClauses';
   const methodWriter = new BufferedCSVWriter(path.join(csvDir, 'method.csv'), methodHeader);
   const codeElemWriter = new BufferedCSVWriter(
     path.join(csvDir, 'codeelement.csv'),
@@ -309,8 +324,8 @@ export const streamAllCSVsToDisk = async (
     );
   }
 
+  // Function and Method have dedicated cases; only Class/Interface/CodeElement use the generic writer
   const codeWriterMap: Record<string, BufferedCSVWriter> = {
-    Function: functionWriter,
     Class: classWriter,
     Interface: interfaceWriter,
     CodeElement: codeElemWriter,
@@ -382,8 +397,29 @@ export const streamAllCSVsToDisk = async (
         );
         break;
       }
+      case 'Function': {
+        const content = await extractContent(node, contentCache);
+        const funcGuardClauses = node.properties.guardClauses || [];
+        const funcGuardStr = serializeGuardClauses(funcGuardClauses);
+        await functionWriter.addRow(
+          [
+            escapeCSVField(node.id),
+            escapeCSVField(node.properties.name || ''),
+            escapeCSVField(node.properties.filePath || ''),
+            escapeCSVNumber(node.properties.startLine, -1),
+            escapeCSVNumber(node.properties.endLine, -1),
+            node.properties.isExported ? 'true' : 'false',
+            escapeCSVField(content),
+            escapeCSVField(node.properties.description || ''),
+            escapeCSVField(funcGuardStr),
+          ].join(','),
+        );
+        break;
+      }
       case 'Method': {
         const content = await extractContent(node, contentCache);
+        const methodGuardClauses = node.properties.guardClauses || [];
+        const methodGuardStr = serializeGuardClauses(methodGuardClauses);
         await methodWriter.addRow(
           [
             escapeCSVField(node.id),
@@ -396,6 +432,7 @@ export const streamAllCSVsToDisk = async (
             escapeCSVField(node.properties.description || ''),
             escapeCSVNumber(node.properties.parameterCount, 0),
             escapeCSVField(node.properties.returnType || ''),
+            escapeCSVField(methodGuardStr),
           ].join(','),
         );
         break;
@@ -448,7 +485,7 @@ export const streamAllCSVsToDisk = async (
         );
         break;
       default: {
-        // Code element nodes (Function, Class, Interface, CodeElement)
+        // Code element nodes (Class, Interface, CodeElement)
         const writer = codeWriterMap[node.label];
         if (writer) {
           const content = await extractContent(node, contentCache);
@@ -507,7 +544,7 @@ export const streamAllCSVsToDisk = async (
 
   // --- Stream relationship CSV ---
   const relCsvPath = path.join(csvDir, 'relations.csv');
-  const relWriter = new BufferedCSVWriter(relCsvPath, 'from,to,type,confidence,reason,step');
+  const relWriter = new BufferedCSVWriter(relCsvPath, 'from,to,type,confidence,reason,step,guard');
   for (const rel of graph.iterRelationships()) {
     await relWriter.addRow(
       [
@@ -517,6 +554,7 @@ export const streamAllCSVsToDisk = async (
         escapeCSVNumber(rel.confidence, 1.0),
         escapeCSVField(rel.reason),
         escapeCSVNumber((rel as any).step, 0),
+        escapeCSVField(rel.guard || ''),
       ].join(','),
     );
   }

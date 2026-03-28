@@ -46,6 +46,7 @@ CREATE NODE TABLE Function (
   isExported BOOLEAN,
   content STRING,
   description STRING,
+  guardClauses STRING,
   PRIMARY KEY (id)
 )`;
 
@@ -87,6 +88,7 @@ CREATE NODE TABLE Method (
   description STRING,
   parameterCount INT32,
   returnType STRING,
+  guardClauses STRING,
   PRIMARY KEY (id)
 )`;
 
@@ -423,7 +425,8 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   type STRING,
   confidence DOUBLE,
   reason STRING,
-  step INT32
+  step INT32,
+  guard STRING
 )`;
 
 // ============================================================================

@@ -89,6 +89,8 @@ export type NodeProperties = {
   responseKeys?: string[];
   errorKeys?: string[];
   middleware?: string[];
+  // Guard clauses: early-return conditions before business logic
+  guardClauses?: { condition: string; returnStatus?: number; line: number }[];
   // Extensible
   [key: string]: unknown;
 };
@@ -131,4 +133,6 @@ export interface GraphRelationship {
   confidence: number;
   reason: string;
   step?: number;
+  /** Condition under which this call is made (e.g., "grant.status === 'submitted'") */
+  guard?: string;
 }
