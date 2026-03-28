@@ -44,7 +44,9 @@ import type {
   ExtractedToolDef,
   FileConstructorBindings,
   FileScopeBindings,
+  FileTypeEnvBindings,
   ExtractedORMQuery,
+  ExtractedParameter,
 } from './workers/parse-worker.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
 
@@ -62,6 +64,8 @@ export interface WorkerExtractedData {
   ormQueries: ExtractedORMQuery[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
+  typeEnvBindings: FileTypeEnvBindings[];
+  parameters: ExtractedParameter[];
 }
 
 // ============================================================================
@@ -96,6 +100,8 @@ const processParsingWithWorkers = async (
       ormQueries: [],
       constructorBindings: [],
       fileScopeBindings: [],
+      typeEnvBindings: [],
+      parameters: [],
     };
 
   const total = files.length;
@@ -120,6 +126,8 @@ const processParsingWithWorkers = async (
   const allORMQueries: ExtractedORMQuery[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
+  const allTypeEnvBindings: FileTypeEnvBindings[] = [];
+  const allParameters: ExtractedParameter[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
       graph.addNode({
@@ -157,6 +165,10 @@ const processParsingWithWorkers = async (
     for (const item of result.constructorBindings) allConstructorBindings.push(item);
     if (result.fileScopeBindings)
       for (const item of result.fileScopeBindings) fileScopeBindingsByFile.push(item);
+    if (result.typeEnvBindings)
+      for (const item of result.typeEnvBindings) allTypeEnvBindings.push(item);
+    if (result.parameters)
+      for (const item of result.parameters) allParameters.push(item);
   }
 
   // Merge and log skipped languages from workers
@@ -187,6 +199,8 @@ const processParsingWithWorkers = async (
     ormQueries: allORMQueries,
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
+    typeEnvBindings: allTypeEnvBindings,
+    parameters: allParameters,
   };
 };
 

@@ -278,6 +278,9 @@ export const streamAllCSVsToDisk = async (
     'id,name,filePath,description',
   );
 
+  // Parameter nodes for data flow tracking
+  const parameterWriter = new BufferedCSVWriter(path.join(csvDir, 'parameter.csv'), 'id,name,filePath,paramIndex,declaredType,isRest');
+
   // Multi-language node types share the same CSV shape (no isExported column)
   const multiLangHeader = 'id,name,filePath,startLine,endLine,content,description';
   const MULTI_LANG_TYPES = [
@@ -447,6 +450,18 @@ export const streamAllCSVsToDisk = async (
           ].join(','),
         );
         break;
+      case 'Parameter':
+        await parameterWriter.addRow(
+          [
+            escapeCSVField(node.id),
+            escapeCSVField(node.properties.name || ''),
+            escapeCSVField(node.properties.filePath || ''),
+            escapeCSVNumber((node.properties as any).paramIndex, 0),
+            escapeCSVField((node.properties as any).declaredType || ''),
+            (node.properties as any).isRest ? 'true' : 'false',
+          ].join(','),
+        );
+        break;
       default: {
         // Code element nodes (Function, Class, Interface, CodeElement)
         const writer = codeWriterMap[node.label];
@@ -501,6 +516,7 @@ export const streamAllCSVsToDisk = async (
     sectionWriter,
     routeWriter,
     toolWriter,
+    parameterWriter,
     ...multiLangWriters.values(),
   ];
   await Promise.all(allWriters.map((w) => w.finish()));
@@ -537,6 +553,7 @@ export const streamAllCSVsToDisk = async (
     ['Section' as NodeTableName, sectionWriter],
     ['Route' as NodeTableName, routeWriter],
     ['Tool' as NodeTableName, toolWriter],
+    ['Parameter' as NodeTableName, parameterWriter],
     ...Array.from(multiLangWriters.entries()).map(
       ([name, w]) => [name as NodeTableName, w] as [NodeTableName, BufferedCSVWriter],
     ),

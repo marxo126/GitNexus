@@ -196,6 +196,18 @@ CREATE NODE TABLE Tool (
   PRIMARY KEY (id)
 )`;
 
+// Function/method parameters (first-class for data flow tracking)
+export const PARAMETER_SCHEMA = `
+CREATE NODE TABLE Parameter (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  paramIndex INT32,
+  declaredType STRING,
+  isRest BOOLEAN,
+  PRIMARY KEY (id)
+)`;
+
 // Markdown heading sections
 export const SECTION_SCHEMA = `
 CREATE NODE TABLE Section (
@@ -318,6 +330,9 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM File TO Tool,
   FROM Function TO Tool,
   FROM Method TO Tool,
+  FROM Function TO Parameter,
+  FROM Method TO Parameter,
+  FROM Parameter TO Parameter,
   FROM CodeElement TO Community,
   FROM Interface TO Community,
   FROM Interface TO Function,
@@ -510,6 +525,8 @@ export const NODE_SCHEMA_QUERIES = [
   ROUTE_SCHEMA,
   // MCP tools
   TOOL_SCHEMA,
+  // Parameters (data flow tracking)
+  PARAMETER_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];
