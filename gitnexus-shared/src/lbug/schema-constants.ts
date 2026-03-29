@@ -40,11 +40,12 @@ export const NODE_TABLES = [
   'Module',
   'Route',
   'Tool',
+  'StatusType',
 ] as const;
 
 export type NodeTableName = (typeof NODE_TABLES)[number];
 
-export const REL_TABLE_NAME = 'CodeRelation';
+export const REL_TABLE_NAME = "CodeRelation";
 
 export const REL_TYPES = [
   'CONTAINS',
@@ -67,8 +68,9 @@ export const REL_TYPES = [
   'ENTRY_POINT_OF',
   'WRAPS',
   'QUERIES',
+  'TRANSITIONS',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];
 
-export const EMBEDDING_TABLE_NAME = 'CodeEmbedding';
+export const EMBEDDING_TABLE_NAME = "CodeEmbedding";

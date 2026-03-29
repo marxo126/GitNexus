@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'StatusType';
 
 export type NodeProperties = {
   name: string;
@@ -115,7 +116,8 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'TRANSITIONS';
 
 export interface GraphNode {
   id: string;
@@ -131,4 +133,9 @@ export interface GraphRelationship {
   confidence: number;
   reason: string;
   step?: number;
+  /** TRANSITIONS-specific: from/to status values and entity context */
+  fromStatus?: string;
+  toStatus?: string;
+  entityType?: string;
+  isTransactional?: boolean;
 }

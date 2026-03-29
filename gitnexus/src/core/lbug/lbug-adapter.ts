@@ -174,14 +174,16 @@ const DB_LOCK_RETRY_DELAY_MS = 500;
 export const isDbBusyError = (err: unknown): boolean => {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return (
-    msg.includes('busy') ||
-    msg.includes('lock') ||
-    msg.includes('already in use') ||
-    msg.includes('could not set lock')
+    msg.includes("busy") ||
+    msg.includes("lock") ||
+    msg.includes("already in use") ||
+    msg.includes("could not set lock")
   );
 };
 
-const runWithSessionLock = async <T>(operation: () => Promise<T>): Promise<T> => {
+const runWithSessionLock = async <T>(
+  operation: () => Promise<T>,
+): Promise<T> => {
   const previous = sessionLock;
   let release: (() => void) | null = null;
   sessionLock = new Promise<void>((resolve) => {
@@ -196,7 +198,8 @@ const runWithSessionLock = async <T>(operation: () => Promise<T>): Promise<T> =>
   }
 };
 
-const normalizeCopyPath = (filePath: string): string => filePath.replace(/\\/g, '/');
+const normalizeCopyPath = (filePath: string): string =>
+  filePath.replace(/\\/g, "/");
 
 export const initLbug = async (dbPath: string) => {
   return runWithSessionLock(() => ensureLbugInitialized(dbPath));
@@ -210,7 +213,10 @@ export const initLbug = async (dbPath: string) => {
  * database is busy (e.g. `gitnexus analyze` holds the write lock).
  * Each retry waits DB_LOCK_RETRY_DELAY_MS * attempt milliseconds.
  */
-export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>): Promise<T> => {
+export const withLbugDb = async <T>(
+  dbPath: string,
+  operation: () => Promise<T>,
+): Promise<T> => {
   let lastError: unknown;
   for (let attempt = 1; attempt <= DB_LOCK_RETRY_ATTEMPTS; attempt++) {
     try {
@@ -243,7 +249,9 @@ export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>)
         vectorExtensionLoaded = false;
       });
       // Sleep outside the lock — no need to block others while waiting
-      await new Promise((resolve) => setTimeout(resolve, DB_LOCK_RETRY_DELAY_MS * attempt));
+      await new Promise((resolve) =>
+        setTimeout(resolve, DB_LOCK_RETRY_DELAY_MS * attempt),
+      );
     }
   }
   // This line is unreachable — the loop either returns or throws inside,
@@ -288,7 +296,10 @@ const doInitLbug = async (dbPath: string) => {
       const realPath = await fs.realpath(dbPath);
       const parentDir = path.dirname(dbPath);
       const realParent = await fs.realpath(parentDir);
-      if (!realPath.startsWith(realParent + path.sep) && realPath !== realParent) {
+      if (
+        !realPath.startsWith(realParent + path.sep) &&
+        realPath !== realParent
+      ) {
         throw new Error(
           `Refusing to delete ${dbPath}: resolved path ${realPath} is outside storage directory`,
         );
@@ -314,7 +325,7 @@ const doInitLbug = async (dbPath: string) => {
     } catch (err) {
       // Only ignore "already exists" errors - log everything else
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('already exists')) {
+      if (!msg.includes("already exists")) {
         console.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
       }
     }
@@ -336,21 +347,21 @@ export const loadGraphToLbug = async (
   onProgress?: LbugProgressCallback,
 ) => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
 
   const log = onProgress || (() => {});
 
-  const csvDir = path.join(storagePath, 'csv');
+  const csvDir = path.join(storagePath, "csv");
 
-  log('Streaming CSVs to disk...');
+  log("Streaming CSVs to disk...");
   const csvResult = await streamAllCSVsToDisk(graph, repoPath, csvDir);
 
   const validTables = new Set<string>(NODE_TABLES as readonly string[]);
   const getNodeLabel = (nodeId: string): string => {
-    if (nodeId.startsWith('comm_')) return 'Community';
-    if (nodeId.startsWith('proc_')) return 'Process';
-    return nodeId.split(':')[0];
+    if (nodeId.startsWith("comm_")) return "Community";
+    if (nodeId.startsWith("proc_")) return "Process";
+    return nodeId.split(":")[0];
   };
 
   // Bulk COPY all node CSVs (sequential — LadybugDB allows only one write txn at a time)
@@ -360,7 +371,9 @@ export const loadGraphToLbug = async (
 
   for (const [table, { csvPath, rows }] of nodeFiles) {
     stepsDone++;
-    log(`Loading nodes ${stepsDone}/${totalSteps}: ${table} (${rows.toLocaleString()} rows)`);
+    log(
+      `Loading nodes ${stepsDone}/${totalSteps}: ${table} (${rows.toLocaleString()} rows)`,
+    );
 
     const normalizedPath = normalizeCopyPath(csvPath);
     const copyQuery = getCopyQuery(table, normalizedPath);
@@ -370,12 +383,13 @@ export const loadGraphToLbug = async (
     } catch (err) {
       try {
         const retryQuery = copyQuery.replace(
-          'auto_detect=false)',
-          'auto_detect=false, IGNORE_ERRORS=true)',
+          "auto_detect=false)",
+          "auto_detect=false, IGNORE_ERRORS=true)",
         );
         await conn.query(retryQuery);
       } catch (retryErr) {
-        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        const retryMsg =
+          retryErr instanceof Error ? retryErr.message : String(retryErr);
         throw new Error(`COPY failed for ${table}: ${retryMsg.slice(0, 200)}`);
       }
     }
@@ -419,8 +433,8 @@ export const loadGraphToLbug = async (
       } catch (err) {
         try {
           const retryQuery = copyQuery.replace(
-            'auto_detect=false)',
-            'auto_detect=false, IGNORE_ERRORS=true)',
+            "auto_detect=false)",
+            "auto_detect=false, IGNORE_ERRORS=true)",
           );
           await conn.query(retryQuery);
         } catch (retryErr) {
@@ -494,24 +508,24 @@ const COPY_CSV_OPTS = `(HEADER=true, ESCAPE='"', DELIM=',', QUOTE='"', PARALLEL=
 // Multi-language table names that were created with backticks in CODE_ELEMENT_BASE
 // and must always be referenced with backticks in queries
 const BACKTICK_TABLES = new Set([
-  'Struct',
-  'Enum',
-  'Macro',
-  'Typedef',
-  'Union',
-  'Namespace',
-  'Trait',
-  'Impl',
-  'TypeAlias',
-  'Const',
-  'Static',
-  'Property',
-  'Record',
-  'Delegate',
-  'Annotation',
-  'Constructor',
-  'Template',
-  'Module',
+  "Struct",
+  "Enum",
+  "Macro",
+  "Typedef",
+  "Union",
+  "Namespace",
+  "Trait",
+  "Impl",
+  "TypeAlias",
+  "Const",
+  "Static",
+  "Property",
+  "Record",
+  "Delegate",
+  "Annotation",
+  "Constructor",
+  "Template",
+  "Module",
 ]);
 
 const escapeTableName = (table: string): string => {
@@ -532,7 +546,9 @@ const fallbackRelationshipInserts = async (
   for (let i = 1; i < validRelLines.length; i++) {
     const line = validRelLines[i];
     try {
-      const match = line.match(/"([^"]*)","([^"]*)","([^"]*)",([0-9.]+),"([^"]*)",([0-9-]+)/);
+      const match = line.match(
+        /"([^"]*)","([^"]*)","([^"]*)",([0-9.]+),"([^"]*)",([0-9-]+)/,
+      );
       if (!match) continue;
       const [, fromId, toId, relType, confidenceStr, reason, stepStr] = match;
       const fromLabel = getNodeLabel(fromId);
@@ -543,7 +559,11 @@ const fallbackRelationshipInserts = async (
       const step = parseInt(stepStr) || 0;
 
       const esc = (s: string) =>
-        s.replace(/'/g, "''").replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+        s
+          .replace(/'/g, "''")
+          .replace(/\\/g, "\\\\")
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r");
       await conn.query(`
         MATCH (a:${escapeLabel(fromLabel)} {id: '${esc(fromId)}' }),
               (b:${escapeLabel(toLabel)} {id: '${esc(toId)}' })
@@ -557,37 +577,40 @@ const fallbackRelationshipInserts = async (
 
 /** Tables with isExported column (TypeScript/JS-native types) */
 const TABLES_WITH_EXPORTED = new Set<string>([
-  'Function',
-  'Class',
-  'Interface',
-  'Method',
-  'CodeElement',
+  "Function",
+  "Class",
+  "Interface",
+  "Method",
+  "CodeElement",
 ]);
 
 const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   const t = escapeTableName(table);
-  if (table === 'File') {
+  if (table === "File") {
     return `COPY ${t}(id, name, filePath, content) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Folder') {
+  if (table === "Folder") {
     return `COPY ${t}(id, name, filePath) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Community') {
+  if (table === "Community") {
     return `COPY ${t}(id, label, heuristicLabel, keywords, description, enrichedBy, cohesion, symbolCount) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Process') {
+  if (table === "Process") {
     return `COPY ${t}(id, label, heuristicLabel, processType, stepCount, communities, entryPointId, terminalId) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Section') {
+  if (table === "Section") {
     return `COPY ${t}(id, name, filePath, startLine, endLine, level, content, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Route') {
+  if (table === "Route") {
     return `COPY ${t}(id, name, filePath, responseKeys, errorKeys, middleware) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Tool') {
+  if (table === "Tool") {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
-  if (table === 'Method') {
+  if (table === "StatusType") {
+    return `COPY ${t}(id, name, filePath, statusValues, statusKind) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
+  if (table === "Method") {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   // TypeScript/JS code element tables have isExported; multi-language tables do not
@@ -612,41 +635,43 @@ export const insertNodeToLbug = async (
   // Use provided dbPath or fall back to module-level db
   const targetDbPath = dbPath || (db ? undefined : null);
   if (!targetDbPath && !db) {
-    throw new Error('LadybugDB not initialized. Provide dbPath or call initLbug first.');
+    throw new Error(
+      "LadybugDB not initialized. Provide dbPath or call initLbug first.",
+    );
   }
 
   try {
     const escapeValue = (v: any): string => {
-      if (v === null || v === undefined) return 'NULL';
-      if (typeof v === 'number') return String(v);
+      if (v === null || v === undefined) return "NULL";
+      if (typeof v === "number") return String(v);
       // Escape backslashes first (for Windows paths), then single quotes
-      return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+      return `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/\n/g, "\\n").replace(/\r/g, "\\r")}'`;
     };
 
     // Build INSERT query based on node type
     const t = escapeTableName(label);
     let query: string;
 
-    if (label === 'File') {
-      query = `CREATE (n:File {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, content: ${escapeValue(properties.content || '')}})`;
-    } else if (label === 'Folder') {
+    if (label === "File") {
+      query = `CREATE (n:File {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, content: ${escapeValue(properties.content || "")}})`;
+    } else if (label === "Folder") {
       query = `CREATE (n:Folder {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}})`;
-    } else if (label === 'Section') {
+    } else if (label === "Section") {
       const descPart = properties.description
         ? `, description: ${escapeValue(properties.description)}`
-        : '';
-      query = `CREATE (n:Section {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, level: ${properties.level || 1}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+        : "";
+      query = `CREATE (n:Section {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, level: ${properties.level || 1}, content: ${escapeValue(properties.content || "")}${descPart}})`;
     } else if (TABLES_WITH_EXPORTED.has(label)) {
       const descPart = properties.description
         ? `, description: ${escapeValue(properties.description)}`
-        : '';
-      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, isExported: ${!!properties.isExported}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+        : "";
+      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, isExported: ${!!properties.isExported}, content: ${escapeValue(properties.content || "")}${descPart}})`;
     } else {
       // Multi-language tables (Struct, Impl, Trait, Macro, etc.) — no isExported
       const descPart = properties.description
         ? `, description: ${escapeValue(properties.description)}`
-        : '';
-      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+        : "";
+      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, content: ${escapeValue(properties.content || "")}${descPart}})`;
     }
 
     // Use per-query connection if dbPath provided (avoids lock conflicts)
@@ -691,10 +716,10 @@ export const batchInsertNodesToLbug = async (
   if (nodes.length === 0) return { inserted: 0, failed: 0 };
 
   const escapeValue = (v: any): string => {
-    if (v === null || v === undefined) return 'NULL';
-    if (typeof v === 'number') return String(v);
+    if (v === null || v === undefined) return "NULL";
+    if (typeof v === "number") return String(v);
     // Escape backslashes first (for Windows paths), then single quotes, then newlines
-    return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+    return `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/\n/g, "\\n").replace(/\r/g, "\\r")}'`;
   };
 
   // Open a single connection for all inserts
@@ -711,25 +736,25 @@ export const batchInsertNodesToLbug = async (
 
         // Use MERGE instead of CREATE for upsert behavior (handles duplicates gracefully)
         const t = escapeTableName(label);
-        if (label === 'File') {
-          query = `MERGE (n:File {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.content = ${escapeValue(properties.content || '')}`;
-        } else if (label === 'Folder') {
+        if (label === "File") {
+          query = `MERGE (n:File {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.content = ${escapeValue(properties.content || "")}`;
+        } else if (label === "Folder") {
           query = `MERGE (n:Folder {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}`;
-        } else if (label === 'Section') {
+        } else if (label === "Section") {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
-            : '';
-          query = `MERGE (n:Section {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.level = ${properties.level || 1}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+            : "";
+          query = `MERGE (n:Section {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.level = ${properties.level || 1}, n.content = ${escapeValue(properties.content || "")}${descPart}`;
         } else if (TABLES_WITH_EXPORTED.has(label)) {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
-            : '';
-          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.isExported = ${!!properties.isExported}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+            : "";
+          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.isExported = ${!!properties.isExported}, n.content = ${escapeValue(properties.content || "")}${descPart}`;
         } else {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
-            : '';
-          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+            : "";
+          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.content = ${escapeValue(properties.content || "")}${descPart}`;
         }
 
         await tempConn.query(query);
@@ -753,7 +778,7 @@ export const batchInsertNodesToLbug = async (
 
 export const executeQuery = async (cypher: string): Promise<any[]> => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
 
   const queryResult = await conn.query(cypher);
@@ -801,7 +826,7 @@ export const executePrepared = async (
   params: Record<string, any>,
 ): Promise<any[]> => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
   const stmt = await conn.prepare(cypher);
   if (!stmt.isSuccess()) {
@@ -818,7 +843,7 @@ export const executeWithReusedStatement = async (
   paramsList: Array<Record<string, any>>,
 ): Promise<void> => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
   if (paramsList.length === 0) return;
 
@@ -836,13 +861,16 @@ export const executeWithReusedStatement = async (
       }
     } catch (e) {
       // Log the error and continue with next batch
-      console.warn('Batch execution error:', e);
+      console.warn("Batch execution error:", e);
     }
     // Note: LadybugDB PreparedStatement doesn't require explicit close()
   }
 };
 
-export const getLbugStats = async (): Promise<{ nodes: number; edges: number }> => {
+export const getLbugStats = async (): Promise<{
+  nodes: number;
+  edges: number;
+}> => {
   if (!conn) return { nodes: 0, edges: 0 };
 
   let totalNodes = 0;
@@ -851,7 +879,9 @@ export const getLbugStats = async (): Promise<{ nodes: number; edges: number }> 
       const queryResult = await conn.query(
         `MATCH (n:${escapeTableName(tableName)}) RETURN count(n) AS cnt`,
       );
-      const nodeResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+      const nodeResult = Array.isArray(queryResult)
+        ? queryResult[0]
+        : queryResult;
       const nodeRows = await nodeResult.getAll();
       if (nodeRows.length > 0) {
         totalNodes += Number(nodeRows[0]?.cnt ?? nodeRows[0]?.[0] ?? 0);
@@ -866,7 +896,9 @@ export const getLbugStats = async (): Promise<{ nodes: number; edges: number }> 
     const queryResult = await conn.query(
       `MATCH ()-[r:${REL_TABLE_NAME}]->() RETURN count(r) AS cnt`,
     );
-    const edgeResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+    const edgeResult = Array.isArray(queryResult)
+      ? queryResult[0]
+      : queryResult;
     const edgeRows = await edgeResult.getAll();
     if (edgeRows.length > 0) {
       totalEdges = Number(edgeRows[0]?.cnt ?? edgeRows[0]?.[0] ?? 0);
@@ -930,7 +962,7 @@ export const loadCachedEmbeddings = async (): Promise<{
     }
     const result = Array.isArray(rows) ? rows[0] : rows;
     for (const row of await result.getAll()) {
-      const nodeId = String(row.nodeId ?? row[0] ?? '');
+      const nodeId = String(row.nodeId ?? row[0] ?? "");
       if (!nodeId) continue;
       embeddingNodeIds.add(nodeId);
       const embedding = row.embedding ?? row[4];
@@ -1063,7 +1095,9 @@ export const deleteNodesForFile = async (
     tempConn = new lbug.Connection(tempDb);
     targetConn = tempConn;
   } else if (!conn) {
-    throw new Error('LadybugDB not initialized. Provide dbPath or call initLbug first.');
+    throw new Error(
+      "LadybugDB not initialized. Provide dbPath or call initLbug first.",
+    );
   }
 
   try {
@@ -1074,7 +1108,7 @@ export const deleteNodesForFile = async (
     // DETACH DELETE removes the node and all its relationships
     for (const tableName of NODE_TABLES) {
       // Skip tables that don't have filePath (Community, Process)
-      if (tableName === 'Community' || tableName === 'Process') continue;
+      if (tableName === "Community" || tableName === "Process") continue;
 
       try {
         // First count how many we'll delete
@@ -1082,7 +1116,9 @@ export const deleteNodesForFile = async (
         const countResult = await targetConn!.query(
           `MATCH (n:${tn}) WHERE n.filePath = '${escapedPath}' RETURN count(n) AS cnt`,
         );
-        const result = Array.isArray(countResult) ? countResult[0] : countResult;
+        const result = Array.isArray(countResult)
+          ? countResult[0]
+          : countResult;
         const rows = await result.getAll();
         const count = Number(rows[0]?.cnt ?? rows[0]?.[0] ?? 0);
 
@@ -1136,7 +1172,7 @@ export const getEmbeddingTableName = (): string => EMBEDDING_TABLE_NAME;
 export const loadFTSExtension = async (): Promise<void> => {
   if (ftsLoaded) return;
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
   try {
     // Try loading locally first (no network required)
@@ -1176,11 +1212,11 @@ export const loadVectorExtension = async (): Promise<void> => {
     await conn.query('LOAD EXTENSION VECTOR');
     vectorExtensionLoaded = true;
   } catch (err: any) {
-    const msg = err?.message || '';
+    const msg = err?.message || "";
     if (
-      msg.includes('already loaded') ||
-      msg.includes('already installed') ||
-      msg.includes('already exists')
+      msg.includes("already loaded") ||
+      msg.includes("already installed") ||
+      msg.includes("already exists")
     ) {
       vectorExtensionLoaded = true;
     } else {
@@ -1199,21 +1235,21 @@ export const createFTSIndex = async (
   tableName: string,
   indexName: string,
   properties: string[],
-  stemmer: string = 'porter',
+  stemmer: string = "porter",
 ): Promise<void> => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
 
   await loadFTSExtension();
 
-  const propList = properties.map((p) => `'${p}'`).join(', ');
+  const propList = properties.map((p) => `'${p}'`).join(", ");
   const query = `CALL CREATE_FTS_INDEX('${tableName}', '${indexName}', [${propList}], stemmer := '${stemmer}')`;
 
   try {
     await conn.query(query);
   } catch (e: any) {
-    if (!e.message?.includes('already exists')) {
+    if (!e.message?.includes("already exists")) {
       throw e;
     }
   }
@@ -1235,14 +1271,20 @@ export const queryFTS = async (
   limit: number = 20,
   conjunctive: boolean = false,
 ): Promise<
-  Array<{ nodeId: string; name: string; filePath: string; score: number; [key: string]: any }>
+  Array<{
+    nodeId: string;
+    name: string;
+    filePath: string;
+    score: number;
+    [key: string]: any;
+  }>
 > => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
 
   // Escape backslashes and single quotes to prevent Cypher injection
-  const escapedQuery = query.replace(/\\/g, '\\\\').replace(/'/g, "''");
+  const escapedQuery = query.replace(/\\/g, "\\\\").replace(/'/g, "''");
 
   const cypher = `
     CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := ${conjunctive})
@@ -1260,16 +1302,16 @@ export const queryFTS = async (
       const node = row.node || row[0] || {};
       const score = row.score ?? row[1] ?? 0;
       return {
-        nodeId: node.nodeId || node.id || '',
-        name: node.name || '',
-        filePath: node.filePath || '',
-        score: typeof score === 'number' ? score : parseFloat(score) || 0,
+        nodeId: node.nodeId || node.id || "",
+        name: node.name || "",
+        filePath: node.filePath || "",
+        score: typeof score === "number" ? score : parseFloat(score) || 0,
         ...node,
       };
     });
   } catch (e: any) {
     // Return empty if index doesn't exist yet
-    if (e.message?.includes('does not exist')) {
+    if (e.message?.includes("does not exist")) {
       return [];
     }
     throw e;
@@ -1279,9 +1321,12 @@ export const queryFTS = async (
 /**
  * Drop an FTS index
  */
-export const dropFTSIndex = async (tableName: string, indexName: string): Promise<void> => {
+export const dropFTSIndex = async (
+  tableName: string,
+  indexName: string,
+): Promise<void> => {
   if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
+    throw new Error("LadybugDB not initialized. Call initLbug first.");
   }
 
   try {
