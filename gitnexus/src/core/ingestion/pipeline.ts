@@ -29,6 +29,7 @@ import {
   routesPhase,
   toolsPhase,
   ormPhase,
+  workflowsPhase,
   crossFilePhase,
   scopeResolutionPhase,
   mroPhase,
@@ -80,6 +81,7 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
     routesPhase,
     toolsPhase,
     ormPhase,
+    workflowsPhase,
     crossFilePhase,
     scopeResolutionPhase,
   ];
