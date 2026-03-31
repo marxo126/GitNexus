@@ -301,3 +301,36 @@ describe('buildSourceSinkPaths', () => {
     expect(paths3).toHaveLength(1);
   });
 });
+
+describe('language-scoped pattern filtering', () => {
+  it('does not match Python-only source pattern against TypeScript content', () => {
+    const compiled = compilePatterns(SOURCE_CATALOG);
+    // request.data is a Python/DRF-only source pattern
+    const tsContent = 'const payload = request.data;';
+    const matches = getMatchingSources(tsContent, 'typescript', compiled);
+    // Should NOT match because request.data is scoped to python
+    const pythonOnlyMatches = matches.filter(
+      (m: any) =>
+        m.languages && m.languages.includes('python') && !m.languages.includes('typescript'),
+    );
+    expect(pythonOnlyMatches).toHaveLength(0);
+  });
+
+  it('matches Python-only source pattern when language is python', () => {
+    const compiled = compilePatterns(SOURCE_CATALOG);
+    const pyContent = 'data = request.data';
+    const matches = getMatchingSources(pyContent, 'python', compiled);
+    expect(matches.some((m: any) => m.pattern === 'request.data')).toBe(true);
+  });
+
+  it('does not match PHP-only sink pattern against JavaScript content', () => {
+    const compiled = compilePatterns(SINK_CATALOG);
+    // Check that a PHP-scoped pattern doesn't match JS content
+    const jsContent = 'const result = mysqli_query(db, sql);';
+    const matches = getMatchingSinks(jsContent, 'javascript', compiled);
+    const phpOnlyMatches = matches.filter(
+      (m: any) => m.languages && m.languages.includes('php') && !m.languages.includes('javascript'),
+    );
+    expect(phpOnlyMatches).toHaveLength(0);
+  });
+});

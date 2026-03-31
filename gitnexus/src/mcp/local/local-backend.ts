@@ -8,6 +8,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
   initLbug,
   executeQuery,
@@ -3281,10 +3282,11 @@ export class LocalBackend {
       const name = row.name ?? row[1] ?? '';
       const filePath = row.filePath ?? row[2] ?? '';
       const id = row.id ?? row[0] ?? '';
+      const language = getLanguageFromFilename(filePath) ?? undefined;
 
       nodeNameMap.set(id, { name, filePath });
 
-      const matchedSources = getMatchingSources(content, undefined, compiledSources);
+      const matchedSources = getMatchingSources(content, language, compiledSources);
       if (matchedSources.length > 0) {
         if (
           !params.source_category ||
@@ -3299,7 +3301,7 @@ export class LocalBackend {
         }
       }
 
-      const matchedSinks = getMatchingSinks(content, undefined, compiledSinks);
+      const matchedSinks = getMatchingSinks(content, language, compiledSinks);
       if (matchedSinks.length > 0) {
         if (!params.owasp || matchedSinks.some((s: any) => s.owasp === params.owasp)) {
           sinks.push({
