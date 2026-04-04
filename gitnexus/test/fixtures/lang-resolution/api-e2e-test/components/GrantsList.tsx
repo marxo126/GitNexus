@@ -3,7 +3,9 @@ export async function GrantsList() {
   const { data, pagination } = await res.json();
   return (
     <ul>
-      {data.map((g: any) => <li key={g.id}>{g.title}</li>)}
+      {data.map((g: any) => (
+        <li key={g.id}>{g.title}</li>
+      ))}
       <p>Page {pagination.page}</p>
     </ul>
   );

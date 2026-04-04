@@ -18,7 +18,7 @@ export class UserService {
   }
 
   getUser(name: string): UserConfig | undefined {
-    return this.users.find(u => u.name === name);
+    return this.users.find((u) => u.name === name);
   }
 }
 

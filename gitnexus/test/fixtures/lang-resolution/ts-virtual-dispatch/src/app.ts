@@ -19,9 +19,9 @@ class Dog extends Animal {
 export function run(): void {
   // Virtual dispatch: declared as Animal, constructed as Dog
   const animal: Animal = new Dog();
-  animal.fetchBall();  // Only Dog has fetchBall — proves virtual dispatch override
+  animal.fetchBall(); // Only Dog has fetchBall — proves virtual dispatch override
 
   // Direct type: no override needed
   const dog: Dog = new Dog();
-  dog.fetchBall();     // Direct resolution to Dog#fetchBall
+  dog.fetchBall(); // Direct resolution to Dog#fetchBall
 }

@@ -14,7 +14,7 @@ class EventEmitter {
 
   emit(event, ...args) {
     const handlers = this.listeners[event] || [];
-    handlers.forEach(handler => handler(...args));
+    handlers.forEach((handler) => handler(...args));
   }
 }
 

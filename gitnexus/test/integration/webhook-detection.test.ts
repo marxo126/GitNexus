@@ -20,7 +20,10 @@ import path from 'path';
 import { LocalBackend } from '../../src/mcp/local/local-backend.js';
 import { listRegisteredRepos } from '../../src/storage/repo-manager.js';
 import { withTestLbugDB } from '../helpers/test-indexed-db.js';
-import { extractWebhooks, type ExtractedWebhook } from '../../src/core/ingestion/workers/parse-worker.js';
+import {
+  extractWebhooks,
+  type ExtractedWebhook,
+} from '../../src/core/ingestion/workers/parse-worker.js';
 
 vi.mock('../../src/storage/repo-manager.js', () => ({
   listRegisteredRepos: vi.fn().mockResolvedValue([]),
@@ -33,14 +36,14 @@ const WEBHOOK_REPO = path.resolve(__dirname, '..', 'fixtures', 'webhook-repo');
 
 describe('webhook detection — extraction from fixture files', () => {
   const stripeContent = fs.readFileSync(
-    path.join(WEBHOOK_REPO, 'app/api/stripe/webhooks/route.ts'), 'utf-8'
+    path.join(WEBHOOK_REPO, 'app/api/stripe/webhooks/route.ts'),
+    'utf-8',
   );
   const edgeFnContent = fs.readFileSync(
-    path.join(WEBHOOK_REPO, 'supabase/functions/notify/index.ts'), 'utf-8'
+    path.join(WEBHOOK_REPO, 'supabase/functions/notify/index.ts'),
+    'utf-8',
   );
-  const realtimeContent = fs.readFileSync(
-    path.join(WEBHOOK_REPO, 'lib/realtime.ts'), 'utf-8'
-  );
+  const realtimeContent = fs.readFileSync(path.join(WEBHOOK_REPO, 'lib/realtime.ts'), 'utf-8');
 
   it('detects Stripe webhook with correct kind and eventTypes', () => {
     const out: ExtractedWebhook[] = [];
@@ -106,135 +109,155 @@ const WEBHOOK_SEED_DATA = [
    CREATE (f)-[:CodeRelation {type: 'TRIGGERS', confidence: 1.0, reason: 'webhook-handler:realtime', step: 0}]->(w)`,
 ];
 
-withTestLbugDB('webhook-persistence', (handle) => {
-
-  describe('eventTypes survive LadybugDB round-trip', () => {
-    it('Stripe webhook eventTypes array is persisted and queryable', async () => {
-      const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
-      const rows = await executeParameterized(handle.repoId, `
+withTestLbugDB(
+  'webhook-persistence',
+  (handle) => {
+    describe('eventTypes survive LadybugDB round-trip', () => {
+      it('Stripe webhook eventTypes array is persisted and queryable', async () => {
+        const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
+        const rows = await executeParameterized(
+          handle.repoId,
+          `
         MATCH (w:Webhook)
         WHERE w.kind = $kind
         RETURN w.name AS name, w.eventTypes AS eventTypes
-      `, { kind: 'stripe' });
+      `,
+          { kind: 'stripe' },
+        );
 
-      expect(rows).toHaveLength(1);
-      expect(rows[0].name).toBe('stripe-webhook');
-      expect(rows[0].eventTypes).toContain('checkout.session.completed');
-      expect(rows[0].eventTypes).toContain('invoice.payment_failed');
-    });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].name).toBe('stripe-webhook');
+        expect(rows[0].eventTypes).toContain('checkout.session.completed');
+        expect(rows[0].eventTypes).toContain('invoice.payment_failed');
+      });
 
-    it('edge-function and realtime webhooks persist with empty eventTypes', async () => {
-      const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
-      const rows = await executeParameterized(handle.repoId, `
+      it('edge-function and realtime webhooks persist with empty eventTypes', async () => {
+        const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
+        const rows = await executeParameterized(
+          handle.repoId,
+          `
         MATCH (w:Webhook)
         WHERE w.kind = $kind
         RETURN w.name AS name, w.eventTypes AS eventTypes
-      `, { kind: 'edge-function' });
+      `,
+          { kind: 'edge-function' },
+        );
 
-      expect(rows).toHaveLength(1);
-      expect(rows[0].name).toBe('notify');
-      expect(rows[0].eventTypes).toEqual([]);
-    });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].name).toBe('notify');
+        expect(rows[0].eventTypes).toEqual([]);
+      });
 
-    it('all 3 webhook nodes survive persistence', async () => {
-      const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
-      const rows = await executeParameterized(handle.repoId, `
+      it('all 3 webhook nodes survive persistence', async () => {
+        const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
+        const rows = await executeParameterized(
+          handle.repoId,
+          `
         MATCH (w:Webhook)
         WHERE w.id STARTS WITH 'Webhook:'
         RETURN w.id AS id, w.kind AS kind
         ORDER BY w.kind
-      `, {});
+      `,
+          {},
+        );
 
-      expect(rows).toHaveLength(3);
-      const kinds = rows.map((r: any) => r.kind);
-      expect(kinds).toContain('stripe');
-      expect(kinds).toContain('edge-function');
-      expect(kinds).toContain('realtime');
-    });
+        expect(rows).toHaveLength(3);
+        const kinds = rows.map((r: any) => r.kind);
+        expect(kinds).toContain('stripe');
+        expect(kinds).toContain('edge-function');
+        expect(kinds).toContain('realtime');
+      });
 
-    it('TRIGGERS edges survive persistence', async () => {
-      const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
-      const rows = await executeParameterized(handle.repoId, `
+      it('TRIGGERS edges survive persistence', async () => {
+        const { executeParameterized } = await import('../../src/mcp/core/lbug-adapter.js');
+        const rows = await executeParameterized(
+          handle.repoId,
+          `
         MATCH (f:File)-[r:CodeRelation {type: 'TRIGGERS'}]->(w:Webhook)
         RETURN f.filePath AS filePath, w.name AS webhookName
         ORDER BY w.name
-      `, {});
+      `,
+          {},
+        );
 
-      expect(rows).toHaveLength(3);
-      const names = rows.map((r: any) => r.webhookName);
-      expect(names).toContain('stripe-webhook');
-      expect(names).toContain('notify');
-      expect(names).toContain('realtime:order-updates');
-    });
-  });
-
-  describe('webhook_map tool reads back persisted data', () => {
-    let backend: LocalBackend;
-
-    beforeAll(async () => {
-      const ext = handle as typeof handle & { _backend?: LocalBackend };
-      if (!ext._backend) {
-        throw new Error('LocalBackend not initialized — afterSetup did not attach _backend to handle');
-      }
-      backend = ext._backend;
-      // Trigger ensureInitialized via a cypher call — webhookMap doesn't call
-      // ensureInitialized itself, so the pool adapter must be warmed up first.
-      await backend.callTool('cypher', { query: 'MATCH (n:Webhook) RETURN count(n) AS c' });
+        expect(rows).toHaveLength(3);
+        const names = rows.map((r: any) => r.webhookName);
+        expect(names).toContain('stripe-webhook');
+        expect(names).toContain('notify');
+        expect(names).toContain('realtime:order-updates');
+      });
     });
 
-    it('returns all 3 webhooks with correct structure', async () => {
-      const result = await backend.callTool('webhook_map', {});
-      expect(result).not.toHaveProperty('error');
-      expect(result.total).toBe(3);
-      expect(result.webhooks).toHaveLength(3);
+    describe('webhook_map tool reads back persisted data', () => {
+      let backend: LocalBackend;
 
-      const stripe = result.webhooks.find((w: any) => w.kind === 'stripe');
-      expect(stripe).toBeDefined();
-      expect(stripe.name).toBe('stripe-webhook');
-      expect(stripe.eventTypes).toContain('checkout.session.completed');
-      expect(stripe.eventTypes).toContain('invoice.payment_failed');
+      beforeAll(async () => {
+        const ext = handle as typeof handle & { _backend?: LocalBackend };
+        if (!ext._backend) {
+          throw new Error(
+            'LocalBackend not initialized — afterSetup did not attach _backend to handle',
+          );
+        }
+        backend = ext._backend;
+        // Trigger ensureInitialized via a cypher call — webhookMap doesn't call
+        // ensureInitialized itself, so the pool adapter must be warmed up first.
+        await backend.callTool('cypher', { query: 'MATCH (n:Webhook) RETURN count(n) AS c' });
+      });
 
-      const edgeFn = result.webhooks.find((w: any) => w.kind === 'edge-function');
-      expect(edgeFn).toBeDefined();
-      expect(edgeFn.name).toBe('notify');
+      it('returns all 3 webhooks with correct structure', async () => {
+        const result = await backend.callTool('webhook_map', {});
+        expect(result).not.toHaveProperty('error');
+        expect(result.total).toBe(3);
+        expect(result.webhooks).toHaveLength(3);
 
-      const realtime = result.webhooks.find((w: any) => w.kind === 'realtime');
-      expect(realtime).toBeDefined();
-      expect(realtime.name).toContain('order-updates');
+        const stripe = result.webhooks.find((w: any) => w.kind === 'stripe');
+        expect(stripe).toBeDefined();
+        expect(stripe.name).toBe('stripe-webhook');
+        expect(stripe.eventTypes).toContain('checkout.session.completed');
+        expect(stripe.eventTypes).toContain('invoice.payment_failed');
+
+        const edgeFn = result.webhooks.find((w: any) => w.kind === 'edge-function');
+        expect(edgeFn).toBeDefined();
+        expect(edgeFn.name).toBe('notify');
+
+        const realtime = result.webhooks.find((w: any) => w.kind === 'realtime');
+        expect(realtime).toBeDefined();
+        expect(realtime.name).toContain('order-updates');
+      });
+
+      it('filters by kind parameter', async () => {
+        const result = await backend.callTool('webhook_map', { kind: 'stripe' });
+        expect(result.total).toBe(1);
+        expect(result.webhooks[0].kind).toBe('stripe');
+        expect(result.webhooks[0].eventTypes).toContain('checkout.session.completed');
+      });
+
+      it('filters by name parameter', async () => {
+        const result = await backend.callTool('webhook_map', { name: 'notify' });
+        expect(result.total).toBe(1);
+        expect(result.webhooks[0].name).toBe('notify');
+        expect(result.webhooks[0].kind).toBe('edge-function');
+      });
     });
-
-    it('filters by kind parameter', async () => {
-      const result = await backend.callTool('webhook_map', { kind: 'stripe' });
-      expect(result.total).toBe(1);
-      expect(result.webhooks[0].kind).toBe('stripe');
-      expect(result.webhooks[0].eventTypes).toContain('checkout.session.completed');
-    });
-
-    it('filters by name parameter', async () => {
-      const result = await backend.callTool('webhook_map', { name: 'notify' });
-      expect(result.total).toBe(1);
-      expect(result.webhooks[0].name).toBe('notify');
-      expect(result.webhooks[0].kind).toBe('edge-function');
-    });
-  });
-
-}, {
-  seed: WEBHOOK_SEED_DATA,
-  poolAdapter: true,
-  afterSetup: async (handle) => {
-    vi.mocked(listRegisteredRepos).mockResolvedValue([
-      {
-        name: 'webhook-test-repo',
-        path: '/test/webhook-repo',
-        storagePath: handle.tmpHandle.dbPath,
-        indexedAt: new Date().toISOString(),
-        lastCommit: 'webhook123',
-        stats: { files: 3, nodes: 6, communities: 0, processes: 0 },
-      },
-    ]);
-
-    const backend = new LocalBackend();
-    await backend.init();
-    (handle as any)._backend = backend;
   },
-});
+  {
+    seed: WEBHOOK_SEED_DATA,
+    poolAdapter: true,
+    afterSetup: async (handle) => {
+      vi.mocked(listRegisteredRepos).mockResolvedValue([
+        {
+          name: 'webhook-test-repo',
+          path: '/test/webhook-repo',
+          storagePath: handle.tmpHandle.dbPath,
+          indexedAt: new Date().toISOString(),
+          lastCommit: 'webhook123',
+          stats: { files: 3, nodes: 6, communities: 0, processes: 0 },
+        },
+      ]);
+
+      const backend = new LocalBackend();
+      await backend.init();
+      (handle as any)._backend = backend;
+    },
+  },
+);

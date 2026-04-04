@@ -18,7 +18,7 @@ function processUndefined(x: User | undefined) {
   }
 }
 
-const processFuncExpr = function(x: User | null) {
+const processFuncExpr = function (x: User | null) {
   if (x !== null) {
     x.save();
   }
