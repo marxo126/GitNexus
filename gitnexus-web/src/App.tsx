@@ -45,17 +45,26 @@ const AppContent = () => {
     availableRepos,
     setAvailableRepos,
     switchRepo,
+    setCurrentRepo,
   } = useAppState();
 
   const graphCanvasRef = useRef<GraphCanvasHandle>(null);
 
   const handleServerConnect = useCallback(
     async (result: ConnectResult): Promise<void> => {
-      // Extract project name from repoPath
+      // Use the canonical repo name from the server response so all subsequent
+      // backend calls (queries, search, grep, readFile) scope to this repo.
+      const repoName = result.repoInfo.name;
       const repoPath = result.repoInfo.repoPath ?? result.repoInfo.path;
-      const parts = (repoPath || '').split('/').filter((p) => p && !p.startsWith('.'));
-      const projectName = parts[parts.length - 1] || parts[0] || 'server-project';
+      const projectName =
+        repoName || repoPath?.split('/').filter(Boolean).pop() || 'server-project';
       setProjectName(projectName);
+      setCurrentRepo(projectName);
+
+      // Update URL so F5 / bookmarks preserve which repo is open
+      const url = new URL(window.location.href);
+      url.searchParams.set('project', projectName);
+      window.history.replaceState(null, '', url.toString());
 
       // Build KnowledgeGraph from server data for visualization
       const graph = createKnowledgeGraph();
@@ -80,10 +89,18 @@ const AppContent = () => {
         console.warn('Failed to initialize agent:', err);
       }
     },
-    [setViewMode, setGraph, setProjectName, initializeAgent, startEmbeddingsWithFallback],
+    [
+      setViewMode,
+      setGraph,
+      setProjectName,
+      setCurrentRepo,
+      initializeAgent,
+      startEmbeddingsWithFallback,
+    ],
   );
 
-  // Auto-connect when ?server query param is present (bookmarkable shortcut)
+  // Auto-connect when ?server query param is present (bookmarkable shortcut).
+  // Also reads ?project= to connect to a specific repo.
   const autoConnectRan = useRef(false);
   useEffect(() => {
     if (autoConnectRan.current) return;
@@ -91,9 +108,12 @@ const AppContent = () => {
     if (!params.has('server')) return;
     autoConnectRan.current = true;
 
-    // Clean the URL so a refresh won't re-trigger
-    const cleanUrl = window.location.pathname + window.location.hash;
-    window.history.replaceState(null, '', cleanUrl);
+    const serverUrl = params.get('server') || window.location.origin;
+    const projectParam = params.get('project') || undefined;
+
+    // Keep ?server= in the URL so F5 reconnects to the same server.
+    // autoConnectRan.current prevents re-trigger within the same session.
+    // handleServerConnect() will add/update ?project= after connecting.
 
     setProgress({
       phase: 'extracting',
@@ -103,36 +123,39 @@ const AppContent = () => {
     });
     setViewMode('loading');
 
-    const serverUrl = params.get('server') || window.location.origin;
-
     const baseUrl = normalizeServerUrl(serverUrl);
 
-    connectToServer(serverUrl, (phase, downloaded, total) => {
-      if (phase === 'validating') {
-        setProgress({
-          phase: 'extracting',
-          percent: 5,
-          message: 'Connecting to server...',
-          detail: 'Validating server',
-        });
-      } else if (phase === 'downloading') {
-        const pct = total ? Math.round((downloaded / total) * 90) + 5 : 50;
-        const mb = (downloaded / (1024 * 1024)).toFixed(1);
-        setProgress({
-          phase: 'extracting',
-          percent: pct,
-          message: 'Downloading graph...',
-          detail: `${mb} MB downloaded`,
-        });
-      } else if (phase === 'extracting') {
-        setProgress({
-          phase: 'extracting',
-          percent: 97,
-          message: 'Processing...',
-          detail: 'Extracting file contents',
-        });
-      }
-    })
+    connectToServer(
+      serverUrl,
+      (phase, downloaded, total) => {
+        if (phase === 'validating') {
+          setProgress({
+            phase: 'extracting',
+            percent: 5,
+            message: 'Connecting to server...',
+            detail: 'Validating server',
+          });
+        } else if (phase === 'downloading') {
+          const pct = total ? Math.round((downloaded / total) * 90) + 5 : 50;
+          const mb = (downloaded / (1024 * 1024)).toFixed(1);
+          setProgress({
+            phase: 'extracting',
+            percent: pct,
+            message: 'Downloading graph...',
+            detail: `${mb} MB downloaded`,
+          });
+        } else if (phase === 'extracting') {
+          setProgress({
+            phase: 'extracting',
+            percent: 97,
+            message: 'Processing...',
+            detail: 'Extracting file contents',
+          });
+        }
+      },
+      undefined,
+      projectParam,
+    )
       .then(async (result) => {
         await handleServerConnect(result);
         setProgress(null);
@@ -196,7 +219,12 @@ const AppContent = () => {
           await handleServerConnect(result);
           setProgress(null);
           if (serverUrl) {
-            setServerBaseUrl(normalizeServerUrl(serverUrl));
+            const base = normalizeServerUrl(serverUrl);
+            setServerBaseUrl(base);
+            // Add ?server= so F5 reconnects to this server
+            const url = new URL(window.location.href);
+            url.searchParams.set('server', base);
+            window.history.replaceState(null, '', url.toString());
           }
         }}
       />
