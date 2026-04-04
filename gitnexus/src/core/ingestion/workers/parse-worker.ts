@@ -1361,12 +1361,20 @@ export function extractWebhooks(filePath: string, content: string, out: Extracte
   const lowerPath = filePath.toLowerCase();
 
   // Skip test files — they often mock webhook patterns (e.g. Stripe constructEvent in test mocks)
-  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+  if (
+    lowerPath.includes('/test') ||
+    lowerPath.includes('.test.') ||
+    lowerPath.includes('.spec.') ||
+    lowerPath.includes('__test')
+  )
+    return;
 
   // Count newlines before offset without allocating substring + split array
   const lineAt = (offset: number): number => {
     let n = 0;
-    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    for (let i = 0; i < offset; i++) {
+      if (content.charCodeAt(i) === 10) n++;
+    }
     return n;
   };
 
@@ -1374,33 +1382,58 @@ export function extractWebhooks(filePath: string, content: string, out: Extracte
     const eventTypes: string[] = [];
     const caseRe = /case\s+['"]([.\w-]+)['"]/g;
     let m;
-    while ((m = caseRe.exec(content)) !== null) { eventTypes.push(m[1]); }
+    while ((m = caseRe.exec(content)) !== null) {
+      eventTypes.push(m[1]);
+    }
     const idx = content.indexOf('constructEvent');
-    out.push({ filePath, name: 'stripe-webhook', kind: 'stripe', eventTypes,
-      lineNumber: idx > -1 ? lineAt(idx) : 0 });
+    out.push({
+      filePath,
+      name: 'stripe-webhook',
+      kind: 'stripe',
+      eventTypes,
+      lineNumber: idx > -1 ? lineAt(idx) : 0,
+    });
     return;
   }
   const edgeFnMatch = filePath.match(/supabase\/functions\/([\w-]+)\/index\.ts$/);
   if (edgeFnMatch && content.includes('Deno.serve')) {
-    out.push({ filePath, name: edgeFnMatch[1], kind: 'edge-function', eventTypes: [],
-      lineNumber: lineAt(content.indexOf('Deno.serve')) });
+    out.push({
+      filePath,
+      name: edgeFnMatch[1],
+      kind: 'edge-function',
+      eventTypes: [],
+      lineNumber: lineAt(content.indexOf('Deno.serve')),
+    });
     return;
   }
   if (content.includes('postgres_changes')) {
     const channelRe = /\.channel\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
     let m;
     while ((m = channelRe.exec(content)) !== null) {
-      out.push({ filePath, name: `realtime:${m[1]}`, kind: 'realtime', eventTypes: [],
-        lineNumber: lineAt(m.index) });
+      out.push({
+        filePath,
+        name: `realtime:${m[1]}`,
+        kind: 'realtime',
+        eventTypes: [],
+        lineNumber: lineAt(m.index),
+      });
     }
   }
   if (lowerPath.includes('webhook') || lowerPath.includes('hook')) {
-    const hasSigVerify = content.includes('x-webhook-signature') || content.includes('x-hub-signature')
-      || content.includes('verify');
+    const hasSigVerify =
+      content.includes('x-webhook-signature') ||
+      content.includes('x-hub-signature') ||
+      content.includes('verify');
     if (hasSigVerify) {
       const pathParts = filePath.split('/');
       const name = pathParts[pathParts.length - 1].replace(/\.(ts|js|tsx|jsx)$/, '');
-      out.push({ filePath, name: `webhook:${name}`, kind: 'generic', eventTypes: [], lineNumber: 0 });
+      out.push({
+        filePath,
+        name: `webhook:${name}`,
+        kind: 'generic',
+        eventTypes: [],
+        lineNumber: 0,
+      });
     }
   }
 }
@@ -1409,13 +1442,25 @@ export function extractWebhooks(filePath: string, content: string, out: Extracte
  * Extract message-queue producer/consumer patterns from source code.
  * Detects: BullMQ, RabbitMQ (amqplib), Kafka (kafkajs), AWS SQS, Celery.
  */
-export function extractQueuePatterns(filePath: string, content: string, out: ExtractedQueuePattern[]): void {
+export function extractQueuePatterns(
+  filePath: string,
+  content: string,
+  out: ExtractedQueuePattern[],
+): void {
   const lowerPath = filePath.toLowerCase();
-  if (lowerPath.includes('/test') || lowerPath.includes('.test.') || lowerPath.includes('.spec.') || lowerPath.includes('__test')) return;
+  if (
+    lowerPath.includes('/test') ||
+    lowerPath.includes('.test.') ||
+    lowerPath.includes('.spec.') ||
+    lowerPath.includes('__test')
+  )
+    return;
 
   const lineAt = (offset: number): number => {
     let n = 0;
-    for (let i = 0; i < offset; i++) { if (content.charCodeAt(i) === 10) n++; }
+    for (let i = 0; i < offset; i++) {
+      if (content.charCodeAt(i) === 10) n++;
+    }
     return n;
   };
 
@@ -1423,59 +1468,132 @@ export function extractQueuePatterns(filePath: string, content: string, out: Ext
   const bullQueueRe = /new\s+Queue\s*\(\s*['"`]([^'"`]+)['"`]/g;
   let m;
   while ((m = bullQueueRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: m[1], method: 'Queue', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: m[1],
+      method: 'Queue',
+      lineNumber: lineAt(m.index),
+    });
   }
   const bullWorkerRe = /new\s+Worker\s*\(\s*['"`]([^'"`]+)['"`]/g;
   while ((m = bullWorkerRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'Worker', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'Worker',
+      lineNumber: lineAt(m.index),
+    });
   }
   const bullProcessRe = /\.process\s*\(\s*['"`]([^'"`]+)['"`]/g;
   while ((m = bullProcessRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'process', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'process',
+      lineNumber: lineAt(m.index),
+    });
   }
 
   // RabbitMQ (amqplib) — sendToQueue / publish = producer, consume / assertQueue + consume = consumer
   const amqpSendRe = /\.sendToQueue\s*\(\s*['"`]([^'"`]+)['"`]/g;
   while ((m = amqpSendRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendToQueue', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: m[1],
+      method: 'sendToQueue',
+      lineNumber: lineAt(m.index),
+    });
   }
   const amqpPublishRe = /\.publish\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*['"`]([^'"`]+)['"`]/g;
   while ((m = amqpPublishRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: `${m[1]}/${m[2]}`, method: 'publish', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: `${m[1]}/${m[2]}`,
+      method: 'publish',
+      lineNumber: lineAt(m.index),
+    });
   }
   const amqpConsumeRe = /\.consume\s*\(\s*['"`]([^'"`]+)['"`]/g;
   while ((m = amqpConsumeRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'consume', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'consume',
+      lineNumber: lineAt(m.index),
+    });
   }
 
   // Kafka (kafkajs) — producer.send({topic: '...'}) = producer, consumer.subscribe({topic: '...'}) = consumer
   const kafkaSendRe = /\.send\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
   while ((m = kafkaSendRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: m[1], method: 'send', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: m[1],
+      method: 'send',
+      lineNumber: lineAt(m.index),
+    });
   }
   const kafkaSubRe = /\.subscribe\s*\(\s*\{[^}]*topic\s*:\s*['"`]([^'"`]+)['"`]/g;
   while ((m = kafkaSubRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'subscribe', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'subscribe',
+      lineNumber: lineAt(m.index),
+    });
   }
 
   // AWS SQS — sendMessage/sendMessageBatch with QueueUrl = producer, receiveMessage = consumer
   const sqsSendRe = /sendMessage(?:Batch)?\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
   while ((m = sqsSendRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: m[1], method: 'sendMessage', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: m[1],
+      method: 'sendMessage',
+      lineNumber: lineAt(m.index),
+    });
   }
   const sqsRecvRe = /receiveMessage\s*\(\s*\{[^}]*QueueUrl\s*:\s*['"`]([^'"`]+)['"`]/g;
   while ((m = sqsRecvRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'receiveMessage', lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'receiveMessage',
+      lineNumber: lineAt(m.index),
+    });
   }
 
   // Celery (Python) — @app.task / .delay() / .apply_async()
   const celeryTaskRe = /@(?:app|celery)\.task[^]*?def\s+(\w+)/g;
   while ((m = celeryTaskRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'consumer', queueName: m[1], method: 'task', handlerName: m[1], lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'consumer',
+      queueName: m[1],
+      method: 'task',
+      handlerName: m[1],
+      lineNumber: lineAt(m.index),
+    });
   }
   const celeryCallRe = /(\w+)\.(delay|apply_async)\s*\(/g;
   while ((m = celeryCallRe.exec(content)) !== null) {
-    out.push({ filePath, role: 'producer', queueName: m[1], method: m[2], lineNumber: lineAt(m.index) });
+    out.push({
+      filePath,
+      role: 'producer',
+      queueName: m[1],
+      method: m[2],
+      lineNumber: lineAt(m.index),
+    });
   }
 }
 

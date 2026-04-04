@@ -1,7 +1,7 @@
 # Test group for integration / fixture-driven tests
 version: 1
 name: test-group
-description: "Test group for integration tests"
+description: 'Test group for integration tests'
 
 repos:
   app/backend: test-backend

@@ -6,6 +6,9 @@ export async function GET() {
     const grants = await fetchGrants();
     return NextResponse.json({ data: grants, pagination: { page: 1, total: grants.length } });
   } catch (err) {
-    return NextResponse.json({ error: 'Failed to fetch grants', message: String(err) }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Failed to fetch grants', message: String(err) },
+      { status: 400 },
+    );
   }
 }

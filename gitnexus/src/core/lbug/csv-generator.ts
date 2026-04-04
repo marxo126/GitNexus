@@ -452,14 +452,14 @@ export const streamAllCSVsToDisk = async (
         );
         break;
       case 'Webhook': {
-        const eventTypes = node.properties.eventTypes as string[] || [];
+        const eventTypes = (node.properties.eventTypes as string[]) || [];
         const eventTypesStr = `[${eventTypes.map((e: string) => `'${e.replace(/'/g, "''")}'`).join(',')}]`;
         await webhookWriter.addRow(
           [
             escapeCSVField(node.id),
             escapeCSVField(node.properties.name || ''),
             escapeCSVField(node.properties.filePath || ''),
-            escapeCSVField(node.properties.kind as string || ''),
+            escapeCSVField((node.properties.kind as string) || ''),
             escapeCSVField(eventTypesStr),
           ].join(','),
         );
