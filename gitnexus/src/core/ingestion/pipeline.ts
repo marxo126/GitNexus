@@ -29,6 +29,7 @@ import {
   routesPhase,
   toolsPhase,
   ormPhase,
+  swiftuiNavigationPhase,
   crossFilePhase,
   scopeResolutionPhase,
   mroPhase,
@@ -43,7 +44,6 @@ import {
   processImportsFromExtracted,
   buildImportResolutionContext
 } from './import-processor.js';
-import { extractSwiftUINavigations } from './swiftui-navigation.js';
 
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
@@ -86,6 +86,7 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
     routesPhase,
     toolsPhase,
     ormPhase,
+    swiftuiNavigationPhase,
     crossFilePhase,
     scopeResolutionPhase,
   ];
