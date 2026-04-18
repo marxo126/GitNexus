@@ -79,7 +79,6 @@ import {
 import type { LanguageProvider } from '../language-provider.js';
 import type { ExtractedJSXElement } from '../a11y-rules/types.js';
 import { extractJSXElements } from '../a11y-rules/jsx-extractor.js';
-import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
 
 // ============================================================================
 // Types for serializable results
@@ -273,7 +272,7 @@ export interface ParseWorkerResult {
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
-  typeEnvBindings: FileTypeEnvBindings[];
+  typeEnvBindings: FileScopeBindings[];
   /** Extracted JSX elements for a11y analysis */
   jsxElements: ExtractedJSXElement[];
   skippedLanguages: Record<string, number>;

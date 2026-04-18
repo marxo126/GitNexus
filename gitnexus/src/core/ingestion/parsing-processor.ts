@@ -64,7 +64,7 @@ export interface WorkerExtractedData {
   ormQueries: ExtractedORMQuery[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
-  typeEnvBindings: FileTypeEnvBindings[];
+  typeEnvBindings: FileScopeBindings[];
   jsxElements: import('./a11y-rules/types.js').ExtractedJSXElement[];
 }
 
@@ -126,7 +126,7 @@ const processParsingWithWorkers = async (
   const allORMQueries: ExtractedORMQuery[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
-  const allTypeEnvBindings: FileTypeEnvBindings[] = [];
+  const allTypeEnvBindings: FileScopeBindings[] = [];
   const allJSXElements: import('./a11y-rules/types.js').ExtractedJSXElement[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
