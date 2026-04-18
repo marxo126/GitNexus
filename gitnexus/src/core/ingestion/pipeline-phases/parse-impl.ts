@@ -69,7 +69,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDev } from '../utils/env.js';
 import { synthesizeWildcardImportBindings, needsSynthesis } from './wildcard-synthesis.js';
 import { extractORMQueriesInline } from './orm-extraction.js';
-import { extractQueuePatternsInline } from './queue-extraction.js';
+import { extractQueuePatterns } from '../utils/queue-extraction.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -516,7 +516,7 @@ export async function runChunkedParseAndResolve(
       }
       for (const f of chunkFiles) {
         extractORMQueriesInline(f.path, f.content, allORMQueries);
-        extractQueuePatternsInline(f.path, f.content, allQueuePatterns);
+        extractQueuePatterns(f.path, f.content, allQueuePatterns);
       }
       astCache.clear();
       cachedSequentialChunkFiles[chunkIdx] = [];
