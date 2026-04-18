@@ -64,8 +64,7 @@ function processQueuePatterns(
       queueNodes.set(pt.queueName, queueNodeId);
     }
 
-    const edgeType =
-      pt.role === 'producer' || pt.role === 'workflow' ? 'ENQUEUES' : 'PROCESSES';
+    const edgeType = pt.role === 'producer' ? 'ENQUEUES' : 'PROCESSES';
     const fileId = generateId('File', pt.filePath);
     const edgeKey = `${fileId}->${queueNodeId}:${edgeType}`;
     if (seenEdges.has(edgeKey)) continue;

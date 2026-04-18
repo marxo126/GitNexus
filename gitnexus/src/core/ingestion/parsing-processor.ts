@@ -176,7 +176,6 @@ const processParsingWithWorkers = async (
     if (result.ormQueries) for (const item of result.ormQueries) allORMQueries.push(item);
     if (result.queuePatterns) for (const item of result.queuePatterns) allQueuePatterns.push(item);
     for (const item of result.constructorBindings) allConstructorBindings.push(item);
-    if (result.typeEnvBindings) for (const item of result.typeEnvBindings) allTypeEnvBindings.push(item);
     if (result.fileScopeBindings)
       for (const item of result.fileScopeBindings) fileScopeBindingsByFile.push(item);
     // RFC #909 Ring 2: aggregate per-file scope artifacts. Tolerant of
