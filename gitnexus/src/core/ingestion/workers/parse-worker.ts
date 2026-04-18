@@ -87,7 +87,6 @@ import type { ParsedFile } from 'gitnexus-shared';
 import { extractParsedFile } from '../scope-extractor-bridge.js';
 import type { ExtractedJSXElement } from '../a11y-rules/types.js';
 import { extractJSXElements } from '../a11y-rules/jsx-extractor.js';
-import { CLASS_CONTAINER_TYPES } from '../utils/ast-helpers.js';
 
 import { logger } from '../../logger.js';
 // ============================================================================
@@ -291,7 +290,7 @@ export interface ParseWorkerResult {
    */
   parsedFiles: ParsedFile[];
   /** File-scope type bindings from TypeEnv fixpoint for exported symbol collection. */
-  typeEnvBindings: FileTypeEnvBindings[];
+  typeEnvBindings: FileScopeBindings[];
   /** Extracted JSX elements for a11y analysis */
   jsxElements: ExtractedJSXElement[];
   skippedLanguages: Record<string, number>;
