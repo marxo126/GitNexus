@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'Parameter';
 
 export type NodeProperties = {
   name: string;

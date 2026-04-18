@@ -269,6 +269,13 @@ export interface FileScopeBindings {
   bindings: [string, string][];
 }
 
+/** Per-file type-environment bindings emitted by the worker for downstream consumers.
+ *  Mirrors FileScopeBindings — [varName, typeName] pairs keyed by file path. */
+export interface FileTypeEnvBindings {
+  filePath: string;
+  bindings: [string, string][];
+}
+
 export interface ParseWorkerResult {
   nodes: ParsedNode[];
   relationships: ParsedRelationship[];
@@ -718,7 +725,8 @@ const cachedExportCheck = (
  */
 function extractParamName(paramNode: Parser.SyntaxNode): string | undefined {
   // Simple identifier: function foo(x)
-  if (paramNode.type === 'identifier' || paramNode.type === 'simple_identifier') return paramNode.text;
+  if (paramNode.type === 'identifier' || paramNode.type === 'simple_identifier')
+    return paramNode.text;
   // Typed parameter: function foo(x: string) — required_parameter or optional_parameter
   const pattern = paramNode.childForFieldName('pattern') || paramNode.childForFieldName('name');
   if (pattern) {
@@ -2171,55 +2179,53 @@ const processFileGroup = (
         }
       }
 
-      let parameterCount: number | undefined;
-      let requiredParameterCount: number | undefined;
-      let parameterTypes: string[] | undefined;
-      let returnType: string | undefined;
-      let declaredType: string | undefined;
-      let visibility: string | undefined;
-      let isStatic: boolean | undefined;
-      let isReadonly: boolean | undefined;
       if (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor') {
-        const sig = extractMethodSignature(definitionNode);
-        parameterCount = sig.parameterCount;
-        requiredParameterCount = sig.requiredParameterCount;
-        parameterTypes = sig.parameterTypes;
-        returnType = sig.returnType;
-
-        // Language-specific return type fallback (e.g. Ruby YARD @return [Type])
-        // Also upgrades uninformative AST types like PHP `array` with PHPDoc `@return User[]`
-        if ((!returnType || returnType === 'array' || returnType === 'iterable') && definitionNode) {
-          const tc = provider.typeConfig;
-          if (tc?.extractReturnType) {
-            const docReturn = tc.extractReturnType(definitionNode);
-            if (docReturn) returnType = docReturn;
-          }
-        }
         // ── Extract individual parameters for data flow tracking ──
         if (definitionNode) {
           const paramListTypes = new Set([
-            'formal_parameters', 'parameters', 'parameter_list',
-            'function_parameters', 'method_parameters', 'function_value_parameters',
+            'formal_parameters',
+            'parameters',
+            'parameter_list',
+            'function_parameters',
+            'method_parameters',
+            'function_value_parameters',
           ]);
-          const paramsNode = definitionNode.childForFieldName('parameters')
-            || definitionNode.children?.find((c: any) => paramListTypes.has(c.type));
+          const paramsNode =
+            definitionNode.childForFieldName('parameters') ||
+            definitionNode.children?.find((c: any) => paramListTypes.has(c.type));
           if (paramsNode && paramListTypes.has(paramsNode.type)) {
             let paramIdx = 0;
             for (const paramChild of paramsNode.namedChildren) {
               if (paramChild.type === 'comment') continue;
               // Skip self/this parameters
-              if (paramChild.text === 'self' || paramChild.text === '&self' || paramChild.text === '&mut self'
-                  || paramChild.type === 'self_parameter') continue;
+              if (
+                paramChild.text === 'self' ||
+                paramChild.text === '&self' ||
+                paramChild.text === '&mut self' ||
+                paramChild.type === 'self_parameter'
+              )
+                continue;
               // Skip Kotlin default-value literals that appear as siblings
-              if (paramChild.type.endsWith('_literal') || paramChild.type === 'call_expression'
-                || paramChild.type === 'navigation_expression' || paramChild.type === 'prefix_expression'
-                || paramChild.type === 'parenthesized_expression') continue;
+              if (
+                paramChild.type.endsWith('_literal') ||
+                paramChild.type === 'call_expression' ||
+                paramChild.type === 'navigation_expression' ||
+                paramChild.type === 'prefix_expression' ||
+                paramChild.type === 'parenthesized_expression'
+              )
+                continue;
 
               const pName = extractParamName(paramChild);
-              if (!pName) { paramIdx++; continue; }
+              if (!pName) {
+                paramIdx++;
+                continue;
+              }
 
-              const isRest = paramChild.type === 'rest_pattern' || paramChild.type === 'rest_element'
-                || (paramChild.type === 'required_parameter' && paramChild.children?.some((c: any) => c.type === 'rest_pattern'));
+              const isRest =
+                paramChild.type === 'rest_pattern' ||
+                paramChild.type === 'rest_element' ||
+                (paramChild.type === 'required_parameter' &&
+                  paramChild.children?.some((c: any) => c.type === 'rest_pattern'));
               const typeNode = paramChild.childForFieldName('type');
               const pDeclaredType = typeNode?.text?.replace(/^:\s*/, '') || undefined;
 
