@@ -57,6 +57,7 @@ import type {
   ExtractedToolDef,
   FileConstructorBindings,
 } from '../workers/parse-worker.js';
+import type { ExtractedJSXElement } from '../a11y-rules/types.js';
 import type { ExtractedHeritage } from '../model/heritage-map.js';
 import type { KnowledgeGraph } from '../../graph/types.js';
 import type { PipelineOptions } from '../pipeline.js';
@@ -106,6 +107,7 @@ export async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allJsxElements: ExtractedJSXElement[];
   bindingAccumulator: BindingAccumulator;
   resolutionContext: ReturnType<typeof createResolutionContext>;
   usedWorkerPool: boolean;
@@ -248,6 +250,7 @@ export async function runChunkedParseAndResolve(
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allJsxElements: ExtractedJSXElement[] = [];
   const deferredWorkerCalls: ExtractedCall[] = [];
   const deferredWorkerHeritage: ExtractedHeritage[] = [];
   const deferredConstructorBindings: FileConstructorBindings[] = [];
@@ -392,6 +395,9 @@ export async function runChunkedParseAndResolve(
         }
         if (chunkWorkerData.ormQueries?.length) {
           for (const item of chunkWorkerData.ormQueries) allORMQueries.push(item);
+        }
+        if (chunkWorkerData.jsxElements?.length) {
+          for (const item of chunkWorkerData.jsxElements) allJsxElements.push(item);
         }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
@@ -589,6 +595,7 @@ export async function runChunkedParseAndResolve(
     allDecoratorRoutes,
     allToolDefs,
     allORMQueries,
+    allJsxElements,
     bindingAccumulator,
     resolutionContext: ctx,
     // Whether a worker pool was actually live for this run. False means the

@@ -27,6 +27,7 @@ import type {
   ExtractedToolDef,
   ExtractedORMQuery,
 } from '../workers/parse-worker.js';
+import type { ExtractedJSXElement } from '../a11y-rules/types.js';
 import type { createResolutionContext } from '../model/resolution-context.js';
 import { runChunkedParseAndResolve } from './parse-impl.js';
 
@@ -47,6 +48,7 @@ export interface ParseOutput {
   readonly allDecoratorRoutes: readonly ExtractedDecoratorRoute[];
   readonly allToolDefs: readonly ExtractedToolDef[];
   readonly allORMQueries: readonly ExtractedORMQuery[];
+  readonly allJsxElements: readonly ExtractedJSXElement[];
   bindingAccumulator: BindingAccumulator;
   /** Resolution context from the parse phase — carries importMap, namedImportMap, etc. */
   resolutionContext: ReturnType<typeof createResolutionContext>;
