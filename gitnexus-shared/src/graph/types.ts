@@ -115,7 +115,8 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'NAVIGATES_TO'; // SwiftUI View → View navigation
 
 export interface GraphNode {
   id: string;
