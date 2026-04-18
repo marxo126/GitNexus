@@ -114,7 +114,7 @@ export const guardsPhase: PipelinePhase<GuardsOutput> = {
           for (const { rel, targetName, sourceName } of fileCalls) {
             if (targetName !== gc.calledName) continue;
             if (gc.functionName && sourceName !== gc.functionName) continue;
-            (rel as Record<string, unknown>).guard = gc.guard;
+            (rel as unknown as Record<string, unknown>).guard = gc.guard;
             guardedCallCount++;
           }
         }
