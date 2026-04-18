@@ -53,6 +53,7 @@ import type {
   ExtractedDecoratorRoute,
   ExtractedFetchCall,
   ExtractedORMQuery,
+  ExtractedQueuePattern,
   ExtractedRoute,
   ExtractedToolDef,
   FileConstructorBindings,
@@ -68,6 +69,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDev } from '../utils/env.js';
 import { synthesizeWildcardImportBindings, needsSynthesis } from './wildcard-synthesis.js';
 import { extractORMQueriesInline } from './orm-extraction.js';
+import { extractQueuePatternsInline } from './queue-extraction.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ export async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allQueuePatterns: ExtractedQueuePattern[];
   bindingAccumulator: BindingAccumulator;
   resolutionContext: ReturnType<typeof createResolutionContext>;
   usedWorkerPool: boolean;
@@ -248,6 +251,7 @@ export async function runChunkedParseAndResolve(
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allQueuePatterns: ExtractedQueuePattern[] = [];
   const deferredWorkerCalls: ExtractedCall[] = [];
   const deferredWorkerHeritage: ExtractedHeritage[] = [];
   const deferredConstructorBindings: FileConstructorBindings[] = [];
@@ -393,6 +397,9 @@ export async function runChunkedParseAndResolve(
         if (chunkWorkerData.ormQueries?.length) {
           for (const item of chunkWorkerData.ormQueries) allORMQueries.push(item);
         }
+        if (chunkWorkerData.queuePatterns?.length) {
+          for (const item of chunkWorkerData.queuePatterns) allQueuePatterns.push(item);
+        }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
         sequentialChunkPaths.push(chunkPaths);
@@ -509,6 +516,7 @@ export async function runChunkedParseAndResolve(
       }
       for (const f of chunkFiles) {
         extractORMQueriesInline(f.path, f.content, allORMQueries);
+        extractQueuePatternsInline(f.path, f.content, allQueuePatterns);
       }
       astCache.clear();
       cachedSequentialChunkFiles[chunkIdx] = [];
@@ -589,6 +597,7 @@ export async function runChunkedParseAndResolve(
     allDecoratorRoutes,
     allToolDefs,
     allORMQueries,
+    allQueuePatterns,
     bindingAccumulator,
     resolutionContext: ctx,
     // Whether a worker pool was actually live for this run. False means the
