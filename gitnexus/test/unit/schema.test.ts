@@ -68,8 +68,8 @@ describe('LadybugDB Schema', () => {
     });
 
     it('has expected total count', () => {
-      // 9 core + 19 multi-language + Route + Tool = 31
-      expect(NODE_TABLES).toHaveLength(31);
+      // 9 core + 19 multi-language + Route + Tool + Queue = 32
+      expect(NODE_TABLES).toHaveLength(32);
     });
   });
 
