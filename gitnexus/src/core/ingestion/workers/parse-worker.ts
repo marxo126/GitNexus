@@ -2580,7 +2580,6 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.queuePatterns, src.queuePatterns);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
-  appendAll(target.typeEnvBindings, src.typeEnvBindings);
   for (const [lang, count] of Object.entries(src.skippedLanguages)) {
     target.skippedLanguages[lang] = (target.skippedLanguages[lang] || 0) + count;
   }
@@ -2638,7 +2637,6 @@ if (parentPort) {
           queuePatterns: [],
           constructorBindings: [],
           fileScopeBindings: [],
-          typeEnvBindings: [],
           skippedLanguages: {},
           fileCount: 0,
         };
