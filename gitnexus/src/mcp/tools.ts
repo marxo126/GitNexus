@@ -547,4 +547,41 @@ WHEN TO USE: After changing group.yaml or re-indexing member repos.`,
       required: ['name'],
     },
   },
+  {
+    name: 'pr_review_summary',
+    description: `Generate a Greptile-style PR review summary with Confidence Score, Files Changed table, and Mermaid sequence/flowchart diagrams. Combines detect_changes + impact + diagram emit into a single Markdown block ready for \`gh pr review\` or \`gh pr comment\`. WHEN TO USE: After identifying a PR's changed symbols. AFTER THIS: Post output as PR comment via gh CLI.`,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+        base_ref: {
+          type: 'string',
+          description: 'Branch/commit to compare against (default: "main")',
+          default: 'main',
+        },
+        scope: {
+          type: 'string',
+          description: 'Diff scope: "compare" (default), "staged", "unstaged", "all"',
+          enum: ['compare', 'staged', 'unstaged', 'all'],
+          default: 'compare',
+        },
+        include_diagrams: {
+          type: 'boolean',
+          description: 'Include Mermaid sequence and flowchart diagrams (default: true)',
+          default: true,
+        },
+        theme: {
+          type: 'string',
+          description: 'Mermaid diagram theme: "neutral" (default) or "default"',
+          enum: ['neutral', 'default'],
+          default: 'neutral',
+        },
+      },
+      required: [],
+    },
+  },
 ];

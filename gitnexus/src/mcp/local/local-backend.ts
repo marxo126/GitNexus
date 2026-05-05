@@ -22,6 +22,12 @@ export { isWriteQuery };
 // git utilities available if needed
 // import { isGitRepo, getCurrentCommit, getGitRoot } from '../../storage/git.js';
 import { parseDiffHunks, type FileDiff } from '../../storage/git.js';
+import { buildPRSummary } from '../../core/diagram/pr-summary.js';
+import type {
+  ChangedSymbol,
+  ImpactResult,
+  ProcessNode as PRProcessNode,
+} from '../../core/diagram/pr-summary.js';
 import {
   listRegisteredRepos,
   cleanupOldKuzuFiles,
@@ -693,6 +699,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'pr_review_summary':
+        return this.prReviewSummary(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -3837,6 +3845,109 @@ export class LocalBackend {
         filePath: s.filePath || s[2],
       })),
     };
+  }
+
+  /**
+   * PR Review Summary — Greptile-style single-shot Markdown block.
+   *
+   * Combines detect_changes + impact (per changed symbol) + diagram emit
+   * into one Markdown response ready for `gh pr review` or `gh pr comment`.
+   */
+  private async prReviewSummary(
+    repo: RepoHandle,
+    params: {
+      base_ref?: string;
+      scope?: string;
+      include_diagrams?: boolean;
+      theme?: 'neutral' | 'default';
+    },
+  ): Promise<{ summary: string }> {
+    const base_ref = params.base_ref ?? 'main';
+    const scope = params.scope ?? 'compare';
+    const include_diagrams = params.include_diagrams ?? true;
+    const theme = params.theme ?? 'neutral';
+
+    // ── Step 1: detect_changes ───────────────────────────────────────
+    const changesResult = await this.detectChanges(repo, { scope, base_ref });
+
+    if (changesResult.error) {
+      return { summary: `**GitNexus PR Summary**\n\nError: ${changesResult.error}` };
+    }
+
+    const changedSymbols: ChangedSymbol[] = (changesResult.changed_symbols ?? []).map((s: any) => ({
+      id: s.id ?? '',
+      name: s.name ?? '',
+      type: s.type ?? '',
+      filePath: s.filePath ?? '',
+      change_type: s.change_type,
+    }));
+
+    const processes: PRProcessNode[] = (changesResult.affected_processes ?? []).map((p: any) => ({
+      id: p.id ?? '',
+      label: p.name ?? '',
+      heuristicLabel: p.name ?? '',
+      processType: p.process_type ?? 'intra_community',
+      stepCount: p.step_count ?? 0,
+      communities: [],
+      entryPointId: '',
+      terminalId: '',
+      trace: (p.changed_steps ?? []).map((cs: any) => cs.symbol ?? ''),
+    }));
+
+    // ── Step 2: impact per changed symbol (upstream, d=1 focus) ─────
+    const impactByTarget = new Map<string, ImpactResult>();
+
+    if (include_diagrams || changedSymbols.length > 0) {
+      // Cap at 10 symbols to avoid excessive latency.
+      // Run impact() calls in parallel — each lookup is independent (different
+      // sym.name, no shared state), so Promise.all gives ~10× wall-time win
+      // versus the previous sequential await loop.
+      const symbolsToImpact = changedSymbols.slice(0, 10);
+      // allSettled (not all): one impact failure shouldn't drop results from
+      // the other 9 in-flight calls. Each entry independently represents a
+      // partial PR view — better to render with what succeeded.
+      const settled = await Promise.allSettled(
+        symbolsToImpact.map((sym) =>
+          this.impact(repo, {
+            target: sym.name,
+            direction: 'upstream',
+            maxDepth: 2,
+          }).then((result) => ({ sym, result })),
+        ),
+      );
+
+      for (const outcome of settled) {
+        if (outcome.status !== 'fulfilled') continue;
+        const { sym, result } = outcome.value;
+        if (result.error) continue;
+        const impactResult: ImpactResult = {
+          risk: result.risk,
+          impactedCount: result.impactedCount ?? 0,
+          byDepth: {
+            d1: (result.byDepth?.d1 ?? []).map((x: any) => ({
+              name: x.name ?? x,
+              filePath: x.filePath,
+            })),
+            d2: (result.byDepth?.d2 ?? []).map((x: any) => ({
+              name: x.name ?? x,
+              filePath: x.filePath,
+            })),
+          },
+          affected_processes: result.affected_processes ?? [],
+        };
+        impactByTarget.set(sym.name, impactResult);
+      }
+    }
+
+    // ── Step 3: compose PR summary ───────────────────────────────────
+    const summary = buildPRSummary({
+      changedSymbols,
+      impactByTarget,
+      processes: include_diagrams ? processes : [],
+      theme,
+    });
+
+    return { summary };
   }
 
   async disconnect(): Promise<void> {

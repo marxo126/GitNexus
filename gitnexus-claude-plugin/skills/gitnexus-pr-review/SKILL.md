@@ -136,6 +136,20 @@ gitnexus_context({name: "validatePayment"})
    - Tests: checkout.test.ts covers processCheckout path, but no webhook test
 ```
 
+## Quick One-Shot (Greptile-style)
+
+For fast review with auto-generated Confidence + diagrams:
+
+```
+gitnexus_pr_review_summary({base_ref: "main"})
+```
+
+Output is Markdown — paste into `gh pr review` or `gh pr comment`. Auto-includes:
+- Confidence Score N/5
+- Files Changed table
+- Sequence diagram (if call-flow refactor)
+- Dependency flowchart (if cross-file dep change)
+
 ## Review Output Format
 
 Structure your review as:
