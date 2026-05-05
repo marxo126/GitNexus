@@ -94,6 +94,24 @@ MATCH (caller)-[:CodeRelation {type: 'CALLS'}]->(f:Function {name: "validateUser
 RETURN caller.name, caller.filePath ORDER BY caller.filePath
 ```
 
+## Pre-commit Blast-Radius Check
+
+After all refactor checklists complete, before committing:
+
+```
+gitnexus_pr_review_summary({base_ref: "HEAD", scope: "unstaged", include_diagrams: true})
+```
+
+Returns Markdown block with Confidence Score N/5 + Files Changed table + dependency flowchart. Use as final pre-commit gate:
+
+| Signal | Action |
+| --- | --- |
+| Score 5/5, no warn nodes | Commit. Refactor is contained. |
+| Score 3-4/5 | Eyeball the flowchart — every d=1 caller path expected? Yes → commit. |
+| Score 1-2/5 OR ⚠️ HIGH/CRITICAL warn | **STOP.** Read each warn node's d=1 callers. Verify their tests cover the new shape. |
+
+Why: refactors silently break callers when test coverage is uneven. Flowchart is the cheap visual proof you didn't miss one.
+
 ## Risk Rules
 
 | Risk Factor         | Mitigation                                |
