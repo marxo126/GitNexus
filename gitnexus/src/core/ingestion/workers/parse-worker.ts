@@ -306,6 +306,8 @@ export interface ParseWorkerResult {
    * finalize-orchestrator.
    */
   parsedFiles: ParsedFile[];
+  /** All-scope type-environment bindings from BindingAccumulator (function-local included). */
+  typeEnvBindings: FileScopeBindings[];
   skippedLanguages: Record<string, number>;
   fileCount: number;
 }
@@ -767,6 +769,7 @@ const processBatch = (
     constructorBindings: [],
     fileScopeBindings: [],
     parsedFiles: [],
+    typeEnvBindings: [],
     skippedLanguages: {},
     fileCount: 0,
   };
@@ -2619,6 +2622,7 @@ let accumulated: ParseWorkerResult = {
   constructorBindings: [],
   fileScopeBindings: [],
   parsedFiles: [],
+  typeEnvBindings: [],
   skippedLanguages: {},
   fileCount: 0,
 };

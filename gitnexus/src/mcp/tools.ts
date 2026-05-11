@@ -475,6 +475,7 @@ Returns: tool nodes with their handler files and descriptions.`,
 WHEN TO USE: Understanding event-driven architecture, finding webhook handlers, tracing event flows.
 
 Returns: webhook nodes with handler files, kind, event types, and TRIGGERS edges.`,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
     inputSchema: {
       type: 'object',
       properties: {
