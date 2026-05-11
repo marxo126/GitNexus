@@ -306,6 +306,7 @@ export async function runChunkedParseAndResolve(
           });
         },
         workerPool,
+        allParameters,
       );
 
       const chunkBasePercent = 20 + (filesParsedSoFar / totalParseable) * 62;

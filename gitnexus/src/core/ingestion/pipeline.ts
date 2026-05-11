@@ -66,7 +66,7 @@ export interface PipelineOptions {
  * Phase dependency graph:
  *
  *   scan → structure → [markdown, cobol] → parse → [routes, tools, orm]
- *     → crossFile → parameters → mro → communities → processes
+ *     → crossFile → scopeResolution → parameters → mro → communities → processes
  *
  * To add a new phase: create a file in pipeline-phases/, export the phase
  * object, and add it to the appropriate position in this array.
@@ -82,8 +82,8 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
     toolsPhase,
     ormPhase,
     crossFilePhase,
-    parametersPhase,
     scopeResolutionPhase,
+    parametersPhase,
   ];
 
   if (!options?.skipGraphPhases) {

@@ -6,8 +6,9 @@
  * synthesises PASSES_TO edges from CALLS edges by position-matching call
  * args to callee parameters.
  *
- * @deps    parse, crossFile  (CALLS edges from cross-file resolution must be
- *                             finalised before PASSES_TO synthesis)
+ * @deps    parse, scopeResolution  (CALLS edges from free-call-fallback in
+ *                                   scope-resolution must be finalised before
+ *                                   PASSES_TO synthesis)
  * @reads   allParameters (from parse), graph CALLS edges
  * @writes  graph (Parameter nodes, CONTAINS edges, PASSES_TO edges)
  */
@@ -34,7 +35,7 @@ export interface ParametersOutput {
 
 export const parametersPhase: PipelinePhase<ParametersOutput> = {
   name: 'parameters',
-  deps: ['parse', 'crossFile'],
+  deps: ['parse', 'scopeResolution'],
 
   async execute(
     ctx: PipelineContext,

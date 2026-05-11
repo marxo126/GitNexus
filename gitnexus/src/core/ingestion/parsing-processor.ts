@@ -331,6 +331,7 @@ const processParsingSequential = async (
   astCache: ASTCache,
   scopeTreeCache: ASTCache | undefined,
   onFileProgress?: FileProgressCallback,
+  parametersOut?: ExtractedParameter[],
 ) => {
   const parser = await loadParser();
   const total = files.length;
@@ -548,6 +549,7 @@ const processParsingSequential = async (
               enriched = true;
               arityForId = arityForIdFromInfo(info);
               methodProps = buildMethodProps(info);
+              seqDefMethodInfo = info;
             }
           }
         }
@@ -630,6 +632,31 @@ const processParsingSequential = async (
       };
 
       graph.addNode(node);
+
+      // Capture parameters from the same MethodInfo used for node enrichment so the
+      // sequential path emits ExtractedParameter records consistent with the worker path.
+      if (
+        parametersOut &&
+        seqDefMethodInfo &&
+        (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor')
+      ) {
+        const paramLine = definitionNode
+          ? definitionNode.startPosition.row + lineOffset
+          : startLine;
+        for (let i = 0; i < seqDefMethodInfo.parameters.length; i++) {
+          const p = seqDefMethodInfo.parameters[i];
+          if (!p.name) continue;
+          parametersOut.push({
+            ownerId: nodeId,
+            name: p.name,
+            paramIndex: i,
+            declaredType: p.rawType ?? p.type ?? '',
+            isRest: p.isVariadic,
+            filePath: file.path,
+            line: paramLine,
+          });
+        }
+      }
 
       // enclosingClassId already computed above (before nodeId generation)
 
@@ -738,6 +765,13 @@ export const processParsing = async (
   scopeTreeCache: ASTCache | undefined,
   onFileProgress?: FileProgressCallback,
   workerPool?: WorkerPool,
+  /**
+   * Mutable accumulator the sequential path pushes ExtractedParameter records
+   * into so callers can collect parameter data even when no worker pool is
+   * used. Worker-pool runs surface this data via the returned WorkerExtractedData
+   * instead; passing this array is harmless on the worker path (it stays empty).
+   */
+  sequentialParametersOut?: ExtractedParameter[],
 ): Promise<WorkerExtractedData | null> => {
   let lastProgress = 0;
   const reportProgress: FileProgressCallback | undefined = onFileProgress
@@ -785,6 +819,7 @@ export const processParsing = async (
     astCache,
     scopeTreeCache,
     reportProgress,
+    sequentialParametersOut,
   );
   return null;
 };

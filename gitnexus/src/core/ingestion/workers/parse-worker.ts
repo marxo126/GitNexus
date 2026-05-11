@@ -2263,25 +2263,34 @@ const processFileGroup = (
       });
 
       // Capture parameters so downstream phases can bind PASSES_TO edges at call-sites.
-      if (
-        defMethodInfo &&
-        (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor')
-      ) {
-        const paramLine = definitionNode
-          ? definitionNode.startPosition.row + lineOffset
-          : startLine;
-        for (let i = 0; i < defMethodInfo.parameters.length; i++) {
-          const p = defMethodInfo.parameters[i];
-          if (!p.name) continue;
-          result.parameters.push({
-            ownerId: nodeId,
-            name: p.name,
-            paramIndex: i,
-            declaredType: p.rawType ?? p.type ?? '',
-            isRest: p.isVariadic,
+      // Prefer MethodInfo from the class-walk or extractFromNode paths above; fall back to
+      // a one-shot extractFromNode call for module-level callables that the typed paths
+      // skipped (e.g. JS/TS function_declaration outside any class).
+      if (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor') {
+        let paramSource = defMethodInfo;
+        if (!paramSource && provider.methodExtractor?.extractFromNode && definitionNode) {
+          paramSource = provider.methodExtractor.extractFromNode(definitionNode, {
             filePath: file.path,
-            line: paramLine,
-          });
+            language,
+          }) ?? undefined;
+        }
+        if (paramSource && paramSource.parameters.length > 0) {
+          const paramLine = definitionNode
+            ? definitionNode.startPosition.row + lineOffset
+            : startLine;
+          for (let i = 0; i < paramSource.parameters.length; i++) {
+            const p = paramSource.parameters[i];
+            if (!p.name) continue;
+            result.parameters.push({
+              ownerId: nodeId,
+              name: p.name,
+              paramIndex: i,
+              declaredType: p.rawType ?? p.type ?? '',
+              isRest: p.isVariadic,
+              filePath: file.path,
+              line: paramLine,
+            });
+          }
         }
       }
 

@@ -105,6 +105,7 @@ export function emitFreeCallFallback(
         // Match legacy DAG's reason convention so consumers that
         // assert `reason === 'import-resolved'` keep working.
         reason: fnDef.filePath !== parsed.filePath ? 'import-resolved' : 'local-call',
+        ...(site.arity !== undefined ? { argCount: site.arity } : {}),
       });
       emitted++;
     }
