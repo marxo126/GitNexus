@@ -227,6 +227,19 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+/** A function/method/constructor parameter, captured for data-flow analysis. */
+export interface ExtractedParameter {
+  /** Node ID of the owning Function/Method/Constructor */
+  ownerId: string;
+  name: string;
+  paramIndex: number;
+  declaredType: string;
+  /** True for variadic/rest params (e.g. `...args` in TS, `*args` in Python). */
+  isRest: boolean;
+  filePath: string;
+  line: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -276,6 +289,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  parameters: ExtractedParameter[];
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
@@ -743,6 +757,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    parameters: [],
     constructorBindings: [],
     fileScopeBindings: [],
     parsedFiles: [],
@@ -2087,6 +2102,7 @@ const processFileGroup = (
             enrichedByMethodExtractor = true;
             arityForId = arityForIdFromInfo(info);
             methodProps = buildMethodProps(info);
+            defMethodInfo = info;
           }
         }
       }
@@ -2246,6 +2262,29 @@ const processFileGroup = (
         },
       });
 
+      // Capture parameters so downstream phases can bind PASSES_TO edges at call-sites.
+      if (
+        defMethodInfo &&
+        (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor')
+      ) {
+        const paramLine = definitionNode
+          ? definitionNode.startPosition.row + lineOffset
+          : startLine;
+        for (let i = 0; i < defMethodInfo.parameters.length; i++) {
+          const p = defMethodInfo.parameters[i];
+          if (!p.name) continue;
+          result.parameters.push({
+            ownerId: nodeId,
+            name: p.name,
+            paramIndex: i,
+            declaredType: p.rawType ?? p.type ?? '',
+            isRest: p.isVariadic,
+            filePath: file.path,
+            line: paramLine,
+          });
+        }
+      }
+
       // enclosingClassId already computed above (before nodeId generation)
 
       result.symbols.push({
@@ -2347,6 +2386,7 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  parameters: [],
   constructorBindings: [],
   fileScopeBindings: [],
   parsedFiles: [],
@@ -2375,6 +2415,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.decoratorRoutes, src.decoratorRoutes);
   appendAll(target.toolDefs, src.toolDefs);
   appendAll(target.ormQueries, src.ormQueries);
+  appendAll(target.parameters, src.parameters);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
   appendAll(target.parsedFiles, src.parsedFiles);
@@ -2427,6 +2468,7 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        parameters: [],
         constructorBindings: [],
         fileScopeBindings: [],
         parsedFiles: [],

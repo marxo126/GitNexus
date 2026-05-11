@@ -605,6 +605,9 @@ const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'Parameter') {
+    return `COPY ${t}(id, name, filePath, paramIndex, declaredType, isRest) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   if (table === 'Method') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
@@ -657,6 +660,8 @@ export const insertNodeToLbug = async (
         ? `, description: ${escapeValue(properties.description)}`
         : '';
       query = `CREATE (n:Section {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, level: ${properties.level || 1}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+    } else if (label === 'Parameter') {
+      query = `CREATE (n:Parameter {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, paramIndex: ${properties.paramIndex || 0}, declaredType: ${escapeValue(properties.declaredType || '')}, isRest: ${!!properties.isRest}})`;
     } else if (TABLES_WITH_EXPORTED.has(label)) {
       const descPart = properties.description
         ? `, description: ${escapeValue(properties.description)}`
@@ -740,6 +745,8 @@ export const batchInsertNodesToLbug = async (
             ? `, n.description = ${escapeValue(properties.description)}`
             : '';
           query = `MERGE (n:Section {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.level = ${properties.level || 1}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+        } else if (label === 'Parameter') {
+          query = `MERGE (n:Parameter {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.paramIndex = ${properties.paramIndex || 0}, n.declaredType = ${escapeValue(properties.declaredType || '')}, n.isRest = ${!!properties.isRest}`;
         } else if (TABLES_WITH_EXPORTED.has(label)) {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
