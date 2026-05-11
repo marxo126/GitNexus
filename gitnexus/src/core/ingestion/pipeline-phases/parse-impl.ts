@@ -53,6 +53,7 @@ import type {
   ExtractedDecoratorRoute,
   ExtractedFetchCall,
   ExtractedORMQuery,
+  ExtractedParameter,
   ExtractedRoute,
   ExtractedToolDef,
   FileConstructorBindings,
@@ -107,6 +108,7 @@ export async function runChunkedParseAndResolve(
   allDecoratorRoutes: ExtractedDecoratorRoute[];
   allToolDefs: ExtractedToolDef[];
   allORMQueries: ExtractedORMQuery[];
+  allParameters: ExtractedParameter[];
   bindingAccumulator: BindingAccumulator;
   resolutionContext: ReturnType<typeof createResolutionContext>;
   usedWorkerPool: boolean;
@@ -267,6 +269,7 @@ export async function runChunkedParseAndResolve(
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allParameters: ExtractedParameter[] = [];
   const deferredWorkerCalls: ExtractedCall[] = [];
   const deferredWorkerHeritage: ExtractedHeritage[] = [];
   const deferredConstructorBindings: FileConstructorBindings[] = [];
@@ -412,6 +415,9 @@ export async function runChunkedParseAndResolve(
         }
         if (chunkWorkerData.ormQueries?.length) {
           for (const item of chunkWorkerData.ormQueries) allORMQueries.push(item);
+        }
+        if (chunkWorkerData.parameters?.length) {
+          for (const item of chunkWorkerData.parameters) allParameters.push(item);
         }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
@@ -609,6 +615,7 @@ export async function runChunkedParseAndResolve(
     allDecoratorRoutes,
     allToolDefs,
     allORMQueries,
+    allParameters,
     bindingAccumulator,
     resolutionContext: ctx,
     // Whether a worker pool was actually live for this run. False means the
