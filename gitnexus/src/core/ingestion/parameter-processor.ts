@@ -3,14 +3,10 @@
  *
  * Pure helpers that materialize first-class Parameter nodes (and CONTAINS edges
  * from their owning callable) from per-file `ExtractedParameter` records
- * emitted by the parse worker. The pipeline phase in
+ * emitted by the parse worker, plus PASSES_TO edge synthesis from CALLS edges
+ * by position-matching call args to callee parameters. The pipeline phase in
  * `pipeline-phases/parameters.ts` orchestrates calls into here and applies the
  * results to the graph.
- *
- * PASSES_TO synthesis (matching call-site arg positions to callee parameters)
- * is intentionally deferred — it requires `argCount` on CALLS edges, which is
- * not yet persisted by call-processor. Adding the Parameter nodes alone is
- * enough to unlock downstream consumers that key off label='Parameter'.
  */
 
 import { generateId } from '../../lib/utils.js';
@@ -53,6 +49,94 @@ export function createParameterNodes(params: readonly ExtractedParameter[]): Par
       isRest: p.isRest,
       line: p.line,
     });
+  }
+  return out;
+}
+
+export interface PassesToEdge {
+  id: string;
+  /** Caller node ID — the enclosing Function/Method/Constructor at the call-site. */
+  callerId: string;
+  /** Parameter node ID being filled by an argument. */
+  paramId: string;
+  /** Zero-based position at the call-site this edge represents. */
+  argIndex: number;
+  /** Inherited from the parent CALLS edge. */
+  confidence: number;
+  reason: string;
+}
+
+/** Index parameters by owner, sorted ascending by paramIndex. Multiple records
+ *  for the same `(ownerId, paramIndex)` collapse — last write wins after the
+ *  worker-side dedup, which is good enough for positional matching. */
+export function buildCalleeParamMap(
+  params: readonly ExtractedParameter[],
+): Map<string, ExtractedParameter[]> {
+  const byOwner = new Map<string, ExtractedParameter[]>();
+  for (const p of params) {
+    if (!p.name) continue;
+    let arr = byOwner.get(p.ownerId);
+    if (!arr) {
+      arr = [];
+      byOwner.set(p.ownerId, arr);
+    }
+    arr.push(p);
+  }
+  for (const arr of byOwner.values()) {
+    arr.sort((a, b) => a.paramIndex - b.paramIndex);
+  }
+  return byOwner;
+}
+
+export interface CallEdgeRecord {
+  /** CALLS edge ID (used only to seed the PASSES_TO edge id for uniqueness). */
+  id: string;
+  callerId: string;
+  calleeId: string;
+  argCount: number;
+  confidence: number;
+  reason: string;
+}
+
+/**
+ * Build PASSES_TO edges by matching call-site positional args to callee
+ * parameters. For a non-rest param at position `i`, emit an edge when
+ * `i < argCount`. When the callee's last param is rest (`...args`), every
+ * supplied arg ≥ rest-position routes to that single rest param.
+ *
+ * Calls with no argCount or to callees with no params produce no edges.
+ */
+export function buildPassesToEdges(
+  callEdges: readonly CallEdgeRecord[],
+  calleeParamMap: ReadonlyMap<string, readonly ExtractedParameter[]>,
+): PassesToEdge[] {
+  const out: PassesToEdge[] = [];
+  for (const call of callEdges) {
+    if (!call.argCount || call.argCount <= 0) continue;
+    const params = calleeParamMap.get(call.calleeId);
+    if (!params || params.length === 0) continue;
+
+    const restParam = params[params.length - 1].isRest ? params[params.length - 1] : undefined;
+    const restPos = restParam ? params.length - 1 : -1;
+
+    for (let i = 0; i < call.argCount; i++) {
+      let target: ExtractedParameter | undefined;
+      if (i < params.length && !(i === restPos && restParam)) {
+        target = params[i];
+      } else if (restParam && i >= restPos) {
+        target = restParam;
+      }
+      if (!target) continue;
+      const paramId = buildParameterId(target.ownerId, target.name, target.paramIndex);
+      out.push({
+        id: generateId('PASSES_TO', `${call.callerId}->${paramId}#${i}`),
+        callerId: call.callerId,
+        paramId,
+        argIndex: i,
+        confidence: call.confidence,
+        reason: `${call.reason || 'call'}|arg:${i}`,
+      });
+    }
   }
   return out;
 }

@@ -135,6 +135,13 @@ export interface GraphRelationship {
   reason: string;
   step?: number;
   /**
+   * Argument count at the call-site for CALLS edges. Populated by
+   * call-processor when the language extractor emits an `argCount` and
+   * consumed by parameter-flow synthesis to position-match call args to
+   * callee parameters. In-memory only — not persisted to LadybugDB CSV.
+   */
+  argCount?: number;
+  /**
    * Per-signal evidence trace for edges emitted by the scope-based
    * resolution pipeline (RFC #909 Ring 2 PKG #925). Populated by
    * `emit-references.ts` when draining `ReferenceIndex` into the graph

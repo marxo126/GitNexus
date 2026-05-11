@@ -992,6 +992,7 @@ export const processCalls = async (
             type: 'CALLS',
             confidence: resolved.confidence,
             reason: resolved.reason,
+            ...(langCallSite.argCount !== undefined ? { argCount: langCallSite.argCount } : {}),
           });
 
           if (heritageMap && langCallSite.callForm === 'member' && receiverTypeName) {
@@ -1011,6 +1012,7 @@ export const processCalls = async (
                 type: 'CALLS',
                 confidence: impl.confidence,
                 reason: impl.reason,
+                ...(langCallSite.argCount !== undefined ? { argCount: langCallSite.argCount } : {}),
               });
             }
           }
@@ -1282,10 +1284,11 @@ export const processCalls = async (
         ? { callNode, inferLiteralType: langConfig.inferLiteralType, typeEnv }
         : undefined;
 
+      const callArgCount = countCallArguments(callNode);
       const resolved = resolveCallTarget(
         {
           calledName,
-          argCount: countCallArguments(callNode),
+          argCount: callArgCount,
           callForm,
           receiverTypeName,
           receiverName,
@@ -1309,6 +1312,7 @@ export const processCalls = async (
         type: 'CALLS',
         confidence: resolved.confidence,
         reason: resolved.reason,
+        argCount: callArgCount,
       });
 
       if (heritageMap && callForm === 'member' && receiverTypeName) {
@@ -1328,6 +1332,7 @@ export const processCalls = async (
             type: 'CALLS',
             confidence: impl.confidence,
             reason: impl.reason,
+            argCount: callArgCount,
           });
         }
       }
@@ -2895,6 +2900,7 @@ export const processCallsFromExtracted = async (
         type: 'CALLS',
         confidence: resolved.confidence,
         reason: resolved.reason,
+        ...(effectiveCall.argCount !== undefined ? { argCount: effectiveCall.argCount } : {}),
       });
 
       if (heritageMap && effectiveCall.callForm === 'member' && effectiveCall.receiverTypeName) {
@@ -2917,6 +2923,7 @@ export const processCallsFromExtracted = async (
             type: 'CALLS',
             confidence: impl.confidence,
             reason: impl.reason,
+            ...(effectiveCall.argCount !== undefined ? { argCount: effectiveCall.argCount } : {}),
           });
         }
       }
