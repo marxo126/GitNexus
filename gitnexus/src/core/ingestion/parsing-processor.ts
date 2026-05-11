@@ -78,7 +78,7 @@ export interface WorkerExtractedData {
    * finalize-orchestrator.
    */
   parsedFiles: ParsedFile[];
-  typeEnvBindings: FileTypeEnvBindings[];
+  typeEnvBindings: FileScopeBindings[];
   jsxElements: ExtractedJSXElement[];
 }
 
@@ -142,7 +142,7 @@ const processParsingWithWorkers = async (
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
   const allParsedFiles: ParsedFile[] = [];
-  const allTypeEnvBindings: FileTypeEnvBindings[] = [];
+  const allTypeEnvBindings: FileScopeBindings[] = [];
   const allJSXElements: ExtractedJSXElement[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {

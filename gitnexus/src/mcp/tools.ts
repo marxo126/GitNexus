@@ -532,6 +532,7 @@ AFTER THIS: Use \`context\` on violating components to see usage, or \`impact\` 
       },
       required: [],
     },
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
   },
   {
     name: 'group_list',
