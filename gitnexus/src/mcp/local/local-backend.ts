@@ -189,6 +189,71 @@ function logQueryTiming(query: string, phases: Record<string, number>): void {
   logger.debug({ query: truncated, totalMs, phases }, 'GitNexus query timing');
 }
 
+/**
+ * Parse shape metadata out of a PRODUCES / CONSUMES edge `reason` field.
+ * Format emitted by `state-slot-processor.ts`:
+ *   `shape-{ShapeConfidence|number}|keys:k1,k2|type:TypeName`
+ * Numeric confidence wins when both numeric and tier strings appear; tier
+ * strings are accepted so the reason field can survive either encoding.
+ */
+export function parseShapeReason(reason: string | null | undefined): {
+  confidence: number;
+  keys: string[];
+  typeName: string | null;
+} {
+  if (!reason) return { confidence: 0, keys: [], typeName: null };
+  let confidence = 0;
+  let keys: string[] = [];
+  let typeName: string | null = null;
+
+  const numericConf = reason.match(/^shape-(\d*\.?\d+)/);
+  if (numericConf) {
+    confidence = parseFloat(numericConf[1]);
+  } else {
+    const tierConf = reason.match(/^shape-(type-checked|ast-literal|heuristic)/);
+    if (tierConf) {
+      confidence = tierConf[1] === 'type-checked' ? 1.0 : tierConf[1] === 'ast-literal' ? 0.8 : 0.6;
+    }
+  }
+
+  const keysMatch = reason.match(/\|keys:([^|]*)/);
+  if (keysMatch) keys = keysMatch[1].split(',').filter((k) => k.length > 0);
+
+  const typeMatch = reason.match(/\|type:([^|]+)/);
+  if (typeMatch) typeName = typeMatch[1];
+
+  return { confidence, keys, typeName };
+}
+
+/**
+ * Compute the shape-mismatch verdict for a state slot:
+ *   - 'conflict':  multiple producers write different key sets
+ *   - 'suspicious': a consumer reads keys absent from every producer
+ *   - 'ok':         no mismatch detected
+ */
+export function computeShapeVerdict(
+  producers: ReadonlyArray<{ keys: string[]; typeName?: string | null }>,
+  consumers: ReadonlyArray<{ keys: string[] }>,
+): 'conflict' | 'suspicious' | 'ok' {
+  if (producers.length > 1) {
+    const signatures = new Set(producers.map((p) => [...p.keys].sort().join(',')));
+    if (signatures.size > 1) return 'conflict';
+  }
+
+  const producedKeys = new Set<string>();
+  for (const p of producers) for (const k of p.keys) producedKeys.add(k);
+
+  if (producedKeys.size > 0) {
+    for (const c of consumers) {
+      for (const k of c.keys) {
+        if (!producedKeys.has(k)) return 'suspicious';
+      }
+    }
+  }
+
+  return 'ok';
+}
+
 export interface CodebaseContext {
   projectName: string;
   stats: {
@@ -700,6 +765,8 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'data_flow':
+        return this.dataFlow(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -3791,6 +3858,172 @@ export class LocalBackend {
     }
 
     return { routes: results, total: results.length };
+  }
+
+  /**
+   * Data-flow scan over StateSlot graph — returns producers, consumers, and
+   * a shape-conflict verdict per slot. Sources its info from PRODUCES /
+   * CONSUMES edges seeded by `stateSlotsPhase` during indexing.
+   */
+  private async dataFlow(
+    repo: RepoHandle,
+    params: {
+      query?: string;
+      slotKind?: string;
+      mismatchesOnly?: boolean;
+    },
+  ): Promise<unknown> {
+    await this.ensureInitialized(repo.id);
+
+    let slotFilter = '';
+    const slotParams: Record<string, string> = {};
+    if (params.query) {
+      slotFilter += ` AND n.name CONTAINS $query`;
+      slotParams.query = params.query;
+    }
+    if (params.slotKind) {
+      slotFilter += ` AND n.slotKind = $slotKind`;
+      slotParams.slotKind = params.slotKind;
+    }
+
+    const slotRows = await executeParameterized(
+      repo.id,
+      `
+      MATCH (n:StateSlot)
+      WHERE n.id IS NOT NULL ${slotFilter}
+      RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.slotKind AS slotKind, n.cacheKey AS cacheKey
+    `,
+      slotParams,
+    );
+
+    if (slotRows.length === 0) {
+      return {
+        slots: [],
+        total: 0,
+        conflicts: 0,
+        suspicious: 0,
+        message: params.query
+          ? `No state slots matching "${params.query}"`
+          : 'No state slots found in this project.',
+      };
+    }
+
+    const slotIds = slotRows.map((r) => String(r.id ?? r[0] ?? ''));
+
+    const [producerRows, consumerRows] = await Promise.all([
+      executeParameterized(
+        repo.id,
+        `
+        MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'PRODUCES' AND list_contains($slotIds, s.id)
+        RETURN s.id AS slotId, fn.name AS name, fn.filePath AS filePath, r.reason AS reason, r.confidence AS confidence
+      `,
+        { slotIds },
+      ),
+      executeParameterized(
+        repo.id,
+        `
+        MATCH (fn)-[r:CodeRelation]->(s:StateSlot)
+        WHERE r.type = 'CONSUMES' AND list_contains($slotIds, s.id)
+        RETURN s.id AS slotId, fn.name AS name, fn.filePath AS filePath, r.reason AS reason, r.confidence AS confidence
+      `,
+        { slotIds },
+      ),
+    ]);
+
+    type ProducerInfo = {
+      name: string;
+      filePath: string;
+      keys: string[];
+      typeName: string | null;
+      confidence: number;
+    };
+    type ConsumerInfo = {
+      name: string;
+      filePath: string;
+      keys: string[];
+      confidence: number;
+    };
+
+    const producersBySlot = new Map<string, ProducerInfo[]>();
+    const consumersBySlot = new Map<string, ConsumerInfo[]>();
+
+    for (const row of producerRows) {
+      const slotId = String(row.slotId ?? row[0] ?? '');
+      const shape = parseShapeReason(String(row.reason ?? row[3] ?? ''));
+      const confidence = Number(row.confidence ?? row[4] ?? shape.confidence);
+      let list = producersBySlot.get(slotId);
+      if (!list) {
+        list = [];
+        producersBySlot.set(slotId, list);
+      }
+      list.push({
+        name: String(row.name ?? row[1] ?? ''),
+        filePath: String(row.filePath ?? row[2] ?? ''),
+        keys: shape.keys,
+        typeName: shape.typeName,
+        confidence,
+      });
+    }
+    for (const row of consumerRows) {
+      const slotId = String(row.slotId ?? row[0] ?? '');
+      const shape = parseShapeReason(String(row.reason ?? row[3] ?? ''));
+      const confidence = Number(row.confidence ?? row[4] ?? shape.confidence);
+      let list = consumersBySlot.get(slotId);
+      if (!list) {
+        list = [];
+        consumersBySlot.set(slotId, list);
+      }
+      list.push({
+        name: String(row.name ?? row[1] ?? ''),
+        filePath: String(row.filePath ?? row[2] ?? ''),
+        keys: shape.keys,
+        confidence,
+      });
+    }
+
+    let conflictCount = 0;
+    let suspiciousCount = 0;
+
+    const slots = slotRows.map((row) => {
+      const id = String(row.id ?? row[0] ?? '');
+      const producers = producersBySlot.get(id) ?? [];
+      const consumers = consumersBySlot.get(id) ?? [];
+      const verdict = computeShapeVerdict(producers, consumers);
+      if (verdict === 'conflict') conflictCount++;
+      if (verdict === 'suspicious') suspiciousCount++;
+
+      const cacheKey = String(row.cacheKey ?? row[4] ?? '');
+      return {
+        name: String(row.name ?? row[1] ?? ''),
+        filePath: String(row.filePath ?? row[2] ?? ''),
+        slotKind: String(row.slotKind ?? row[3] ?? ''),
+        ...(cacheKey ? { cacheKey } : {}),
+        verdict,
+        producers: producers.map((p) => ({
+          name: p.name,
+          filePath: p.filePath,
+          ...(p.keys.length > 0 ? { keys: p.keys } : {}),
+          ...(p.typeName ? { typeName: p.typeName } : {}),
+          ...(p.confidence > 0 ? { confidence: p.confidence } : {}),
+        })),
+        consumers: consumers.map((c) => ({
+          name: c.name,
+          filePath: c.filePath,
+          ...(c.keys.length > 0 ? { accessedKeys: c.keys } : {}),
+          ...(c.confidence > 0 ? { confidence: c.confidence } : {}),
+        })),
+      };
+    });
+
+    const filtered = params.mismatchesOnly ? slots.filter((s) => s.verdict !== 'ok') : slots;
+
+    return {
+      slots: filtered,
+      total: filtered.length,
+      conflicts: conflictCount,
+      suspicious: suspiciousCount,
+    };
   }
 
   // ─── Direct Graph Queries (for resources.ts) ────────────────────

@@ -513,6 +513,40 @@ Returns: single route object when one match, or { routes: [...], total: N } for 
     },
   },
   {
+    name: 'data_flow',
+    description: `Show data flow through shared state slots (React Query cache keys, SWR keys, React Context, Redux slices, Zustand stores).
+
+WHEN TO USE: When you need to understand how data flows through shared state, detect cache key collisions, or find shape mismatches where two hooks/components share a state slot but expect different data shapes.
+
+Returns: state slots with their producers (who writes data), consumers (who reads data), shape comparison, and mismatch verdict (ok/suspicious/conflict).
+
+AFTER THIS: If mismatches are found, use \`context\` on the producer/consumer functions to understand the full call chain.`,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Filter by cache key, context name, or slice name (substring match)',
+        },
+        slotKind: {
+          type: 'string',
+          description: 'Filter by state slot kind',
+          enum: ['react-query', 'swr', 'react-context', 'redux', 'zustand', 'trpc', 'graphql', 'custom-hook'],
+        },
+        mismatchesOnly: {
+          type: 'boolean',
+          description: 'Only show slots with shape conflicts.',
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'group_list',
     description: `List all configured repository groups, or return details for one group (repos, manifest links).
 
