@@ -38,6 +38,7 @@ export const NODE_COLORS: Record<NodeLabel, string> = {
   Template: '#a78bfa', // Violet light - like Type
   Route: '#f43f5e', // Rose - like Process
   Tool: '#a855f7', // Purple - like Project
+  StateSlot: '#06b6d4', // Cyan - shared mutable state
 };
 
 // Node sizes by type - clear visual hierarchy with dramatic size differences
@@ -79,6 +80,7 @@ export const NODE_SIZES: Record<NodeLabel, number> = {
   Template: 3, // Like Type
   Route: 5, // Like Enum
   Tool: 5, // Like Enum
+  StateSlot: 6, // Like File - shared state hub
 };
 
 // Community color palette for cluster-based coloring

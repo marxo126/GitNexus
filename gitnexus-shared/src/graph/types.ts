@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'StateSlot';
 
 export type NodeProperties = {
   name: string;
@@ -115,7 +116,9 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'PRODUCES'
+  | 'CONSUMES';
 
 export interface GraphNode {
   id: string;

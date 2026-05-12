@@ -207,6 +207,18 @@ CREATE NODE TABLE Tool (
   PRIMARY KEY (id)
 )`;
 
+// Shared state slots (React Query, SWR, Context, Redux, Zustand, etc.)
+export const STATE_SLOT_SCHEMA = `
+CREATE NODE TABLE StateSlot (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  startLine INT64,
+  slotKind STRING,
+  cacheKey STRING,
+  PRIMARY KEY (id)
+)`;
+
 // Markdown heading sections
 export const SECTION_SCHEMA = `
 CREATE NODE TABLE Section (
@@ -431,6 +443,10 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM CodeElement TO Process,
   FROM Route TO Process,
   FROM Tool TO Process,
+  FROM Function TO StateSlot,
+  FROM Method TO StateSlot,
+  FROM File TO StateSlot,
+  FROM StateSlot TO Process,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -521,6 +537,8 @@ export const NODE_SCHEMA_QUERIES = [
   ROUTE_SCHEMA,
   // MCP tools
   TOOL_SCHEMA,
+  // State slots (React Query, SWR, etc.)
+  STATE_SLOT_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];
