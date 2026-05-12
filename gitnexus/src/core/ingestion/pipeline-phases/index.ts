@@ -15,6 +15,7 @@ export { parsePhase, type ParseOutput } from './parse.js';
 export { routesPhase, type RoutesOutput, type RouteEntry } from './routes.js';
 export { toolsPhase, type ToolsOutput, type ToolDef } from './tools.js';
 export { ormPhase, type ORMOutput } from './orm.js';
+export { stateSlotsPhase, type StateSlotsOutput } from './state-slots.js';
 export { crossFilePhase, type CrossFileOutput } from './cross-file.js';
 export {
   scopeResolutionPhase,
