@@ -20,6 +20,7 @@ import {
   getTreeSitterContentByteLength,
   TREE_SITTER_MAX_BUFFER,
 } from '../constants.js';
+import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 import type { SymbolTableReader } from '../model/symbol-table.js';
 import type { ExtractedHeritage } from '../model/heritage-map.js';
 
@@ -85,6 +86,7 @@ import type { LanguageProvider } from '../language-provider.js';
 import type { ParsedFile } from 'gitnexus-shared';
 import { extractParsedFile } from '../scope-extractor-bridge.js';
 
+import { logger } from '../../logger.js';
 // ============================================================================
 // Types for serializable results
 // ============================================================================
@@ -225,6 +227,19 @@ export interface ExtractedORMQuery {
   lineNumber: number;
 }
 
+/** A function/method/constructor parameter, captured for data-flow analysis. */
+export interface ExtractedParameter {
+  /** Node ID of the owning Function/Method/Constructor */
+  ownerId: string;
+  name: string;
+  paramIndex: number;
+  declaredType: string;
+  /** True for variadic/rest params (e.g. `...args` in TS, `*args` in Python). */
+  isRest: boolean;
+  filePath: string;
+  line: number;
+}
+
 /** Constructor bindings keyed by filePath for cross-file type resolution */
 export interface FileConstructorBindings {
   filePath: string;
@@ -274,6 +289,7 @@ export interface ParseWorkerResult {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  parameters: ExtractedParameter[];
   constructorBindings: FileConstructorBindings[];
   /** All-scope type bindings from TypeEnv for BindingAccumulator (includes function-local). */
   fileScopeBindings: FileScopeBindings[];
@@ -741,6 +757,7 @@ const processBatch = (
     decoratorRoutes: [],
     toolDefs: [],
     ormQueries: [],
+    parameters: [],
     constructorBindings: [],
     fileScopeBindings: [],
     parsedFiles: [],
@@ -1385,7 +1402,7 @@ const processFileGroup = (
     if (parentPort) {
       parentPort.postMessage({ type: 'warning', message });
     } else {
-      console.warn(message);
+      logger.warn(message);
     }
     return;
   }
@@ -1406,15 +1423,20 @@ const processFileGroup = (
       isVueSetup = extracted.isSetup;
     }
 
+    // Per-language source-text transform (e.g., UE macro stripping for C++).
+    // Length-preserving — see LanguageProvider.preprocessSource contract.
+    parseContent =
+      getProvider(language).preprocessSource?.(parseContent, file.path) ?? parseContent;
+
     clearCaches(); // Reset memoization before each new file
 
     let tree;
     try {
-      tree = parser.parse(parseContent, undefined, {
+      tree = parseSourceSafe(parser, parseContent, undefined, {
         bufferSize: getTreeSitterBufferSize(parseContent),
       });
     } catch (err) {
-      console.warn(
+      logger.warn(
         `Failed to parse file ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
@@ -1427,7 +1449,7 @@ const processFileGroup = (
     try {
       matches = query.matches(tree.rootNode);
     } catch (err) {
-      console.warn(
+      logger.warn(
         `Query execution failed for ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
@@ -1447,7 +1469,7 @@ const processFileGroup = (
       file.path,
       (message) => {
         if (parentPort) parentPort.postMessage({ type: 'warning', message });
-        else console.warn(message);
+        else logger.warn(message);
       },
       tree,
     );
@@ -2080,6 +2102,7 @@ const processFileGroup = (
             enrichedByMethodExtractor = true;
             arityForId = arityForIdFromInfo(info);
             methodProps = buildMethodProps(info);
+            defMethodInfo = info;
           }
         }
       }
@@ -2239,6 +2262,38 @@ const processFileGroup = (
         },
       });
 
+      // Capture parameters so downstream phases can bind PASSES_TO edges at call-sites.
+      // Prefer MethodInfo from the class-walk or extractFromNode paths above; fall back to
+      // a one-shot extractFromNode call for module-level callables that the typed paths
+      // skipped (e.g. JS/TS function_declaration outside any class).
+      if (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor') {
+        let paramSource = defMethodInfo;
+        if (!paramSource && provider.methodExtractor?.extractFromNode && definitionNode) {
+          paramSource = provider.methodExtractor.extractFromNode(definitionNode, {
+            filePath: file.path,
+            language,
+          }) ?? undefined;
+        }
+        if (paramSource && paramSource.parameters.length > 0) {
+          const paramLine = definitionNode
+            ? definitionNode.startPosition.row + lineOffset
+            : startLine;
+          for (let i = 0; i < paramSource.parameters.length; i++) {
+            const p = paramSource.parameters[i];
+            if (!p.name) continue;
+            result.parameters.push({
+              ownerId: nodeId,
+              name: p.name,
+              paramIndex: i,
+              declaredType: p.rawType ?? p.type ?? '',
+              isRest: p.isVariadic,
+              filePath: file.path,
+              line: paramLine,
+            });
+          }
+        }
+      }
+
       // enclosingClassId already computed above (before nodeId generation)
 
       result.symbols.push({
@@ -2340,6 +2395,7 @@ let accumulated: ParseWorkerResult = {
   decoratorRoutes: [],
   toolDefs: [],
   ormQueries: [],
+  parameters: [],
   constructorBindings: [],
   fileScopeBindings: [],
   parsedFiles: [],
@@ -2368,6 +2424,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   appendAll(target.decoratorRoutes, src.decoratorRoutes);
   appendAll(target.toolDefs, src.toolDefs);
   appendAll(target.ormQueries, src.ormQueries);
+  appendAll(target.parameters, src.parameters);
   appendAll(target.constructorBindings, src.constructorBindings);
   appendAll(target.fileScopeBindings, src.fileScopeBindings);
   appendAll(target.parsedFiles, src.parsedFiles);
@@ -2420,6 +2477,7 @@ parentPort!.on('message', (msg: WorkerIncomingMessage) => {
         decoratorRoutes: [],
         toolDefs: [],
         ormQueries: [],
+        parameters: [],
         constructorBindings: [],
         fileScopeBindings: [],
         parsedFiles: [],

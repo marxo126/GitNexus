@@ -167,7 +167,18 @@ export const TYPE_ALIAS_SCHEMA = CODE_ELEMENT_BASE('TypeAlias');
 export const CONST_SCHEMA = CODE_ELEMENT_BASE('Const');
 export const STATIC_SCHEMA = CODE_ELEMENT_BASE('Static');
 export const VARIABLE_SCHEMA = CODE_ELEMENT_BASE('Variable');
-export const PROPERTY_SCHEMA = CODE_ELEMENT_BASE('Property');
+export const PROPERTY_SCHEMA = `
+CREATE NODE TABLE \`Property\` (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  startLine INT64,
+  endLine INT64,
+  content STRING,
+  description STRING,
+  declaredType STRING,
+  PRIMARY KEY (id)
+)`;
 export const RECORD_SCHEMA = CODE_ELEMENT_BASE('Record');
 export const DELEGATE_SCHEMA = CODE_ELEMENT_BASE('Delegate');
 export const ANNOTATION_SCHEMA = CODE_ELEMENT_BASE('Annotation');
@@ -193,6 +204,18 @@ CREATE NODE TABLE Tool (
   name STRING,
   filePath STRING,
   description STRING,
+  PRIMARY KEY (id)
+)`;
+
+// Function/method parameters (first-class for data flow tracking)
+export const PARAMETER_SCHEMA = `
+CREATE NODE TABLE Parameter (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  paramIndex INT32,
+  declaredType STRING,
+  isRest BOOL,
   PRIMARY KEY (id)
 )`;
 
@@ -420,6 +443,12 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM CodeElement TO Process,
   FROM Route TO Process,
   FROM Tool TO Process,
+  FROM Function TO Parameter,
+  FROM Method TO Parameter,
+  FROM \`Constructor\` TO Parameter,
+  FROM Parameter TO Parameter,
+  FROM Parameter TO Community,
+  FROM Parameter TO Process,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -510,6 +539,8 @@ export const NODE_SCHEMA_QUERIES = [
   ROUTE_SCHEMA,
   // MCP tools
   TOOL_SCHEMA,
+  // Function parameters (data flow tracking)
+  PARAMETER_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];

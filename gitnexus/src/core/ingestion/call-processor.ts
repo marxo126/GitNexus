@@ -40,6 +40,7 @@ import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
 import { isRegistryPrimary } from './registry-primary-flag.js';
 import { isVerboseIngestionEnabled } from './utils/verbose.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
+import { parseSourceSafe } from '../tree-sitter/safe-parse.js';
 import {
   FUNCTION_NODE_TYPES,
   findEnclosingClassId,
@@ -75,6 +76,7 @@ import { extractReturnTypeName, stripNullable } from './type-extractors/shared.j
 import type { LiteralTypeInferrer } from './type-extractors/types.js';
 import type { SyntaxNode } from './utils/ast-helpers.js';
 
+import { logger } from '../logger.js';
 /** Per-file resolved type bindings for exported symbols.
  *  Populated during call processing, consumed by Phase 14 re-resolution pass. */
 export type ExportedTypeMap = Map<string, Map<string, string>>;
@@ -768,9 +770,10 @@ export const processCalls = async (
 
     let tree = astCache.get(file.path);
     if (!tree) {
+      const parseContent = provider.preprocessSource?.(file.content, file.path) ?? file.content;
       try {
-        tree = parser.parse(file.content, undefined, {
-          bufferSize: getTreeSitterBufferSize(file.content),
+        tree = parseSourceSafe(parser, parseContent, undefined, {
+          bufferSize: getTreeSitterBufferSize(parseContent),
         });
       } catch (parseError) {
         continue;
@@ -784,7 +787,7 @@ export const processCalls = async (
       const query = new Parser.Query(lang, queryStr);
       matches = query.matches(tree.rootNode);
     } catch (queryError) {
-      console.warn(`Query error for ${file.path}:`, queryError);
+      logger.warn({ queryError }, `Query error for ${file.path}:`);
       continue;
     }
 
@@ -989,6 +992,7 @@ export const processCalls = async (
             type: 'CALLS',
             confidence: resolved.confidence,
             reason: resolved.reason,
+            ...(langCallSite.argCount !== undefined ? { argCount: langCallSite.argCount } : {}),
           });
 
           if (heritageMap && langCallSite.callForm === 'member' && receiverTypeName) {
@@ -1008,6 +1012,7 @@ export const processCalls = async (
                 type: 'CALLS',
                 confidence: impl.confidence,
                 reason: impl.reason,
+                ...(langCallSite.argCount !== undefined ? { argCount: langCallSite.argCount } : {}),
               });
             }
           }
@@ -1279,10 +1284,11 @@ export const processCalls = async (
         ? { callNode, inferLiteralType: langConfig.inferLiteralType, typeEnv }
         : undefined;
 
+      const callArgCount = countCallArguments(callNode);
       const resolved = resolveCallTarget(
         {
           calledName,
-          argCount: countCallArguments(callNode),
+          argCount: callArgCount,
           callForm,
           receiverTypeName,
           receiverName,
@@ -1306,6 +1312,7 @@ export const processCalls = async (
         type: 'CALLS',
         confidence: resolved.confidence,
         reason: resolved.reason,
+        argCount: callArgCount,
       });
 
       if (heritageMap && callForm === 'member' && receiverTypeName) {
@@ -1325,6 +1332,7 @@ export const processCalls = async (
             type: 'CALLS',
             confidence: impl.confidence,
             reason: impl.reason,
+            argCount: callArgCount,
           });
         }
       }
@@ -1391,7 +1399,7 @@ export const processCalls = async (
 
   if (skippedByLang && skippedByLang.size > 0) {
     for (const [lang, count] of skippedByLang.entries()) {
-      console.warn(
+      logger.warn(
         `[ingestion] Skipped ${count} ${lang} file(s) in call processing — ${lang} parser not available.`,
       );
     }
@@ -2892,6 +2900,7 @@ export const processCallsFromExtracted = async (
         type: 'CALLS',
         confidence: resolved.confidence,
         reason: resolved.reason,
+        ...(effectiveCall.argCount !== undefined ? { argCount: effectiveCall.argCount } : {}),
       });
 
       if (heritageMap && effectiveCall.callForm === 'member' && effectiveCall.receiverTypeName) {
@@ -2914,6 +2923,7 @@ export const processCallsFromExtracted = async (
             type: 'CALLS',
             confidence: impl.confidence,
             reason: impl.reason,
+            ...(effectiveCall.argCount !== undefined ? { argCount: effectiveCall.argCount } : {}),
           });
         }
       }
@@ -3279,9 +3289,10 @@ export const extractFetchCallsFromFiles = async (
 
     let tree = astCache.get(file.path);
     if (!tree) {
+      const parseContent = provider.preprocessSource?.(file.content, file.path) ?? file.content;
       try {
-        tree = parser.parse(file.content, undefined, {
-          bufferSize: getTreeSitterBufferSize(file.content),
+        tree = parseSourceSafe(parser, parseContent, undefined, {
+          bufferSize: getTreeSitterBufferSize(parseContent),
         });
       } catch {
         continue;

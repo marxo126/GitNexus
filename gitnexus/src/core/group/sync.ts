@@ -6,15 +6,19 @@ import { readRegistry, type RegistryEntry } from '../../storage/repo-manager.js'
 import type { GroupConfig, RepoHandle, RepoSnapshot, StoredContract, CrossLink } from './types.js';
 import { HttpRouteExtractor } from './extractors/http-route-extractor.js';
 import { GrpcExtractor } from './extractors/grpc-extractor.js';
+import { ThriftExtractor } from './extractors/thrift-extractor.js';
 import { TopicExtractor } from './extractors/topic-extractor.js';
+import { IncludeExtractor } from './extractors/include-extractor.js';
 import { ManifestExtractor } from './extractors/manifest-extractor.js';
-import { extractRustWorkspaceLinks } from './extractors/rust-workspace-extractor.js';
-import { runExactMatch } from './matching.js';
+import { discoverWorkspaceLinks } from './extractors/workspace-extractor.js';
+import { buildProviderIndex, runExactMatch, runWildcardMatch } from './matching.js';
 import { detectServiceBoundaries, assignService } from './service-boundary-detector.js';
 import type { CypherExecutor } from './contract-extractor.js';
 import { writeContractRegistry } from './storage.js';
+import { writeBridge } from './bridge-db.js';
 import type { ContractRegistry } from './types.js';
 
+import { logger } from '../logger.js';
 export interface SyncOptions {
   extractorOverride?:
     | ((repo: RepoHandle) => Promise<StoredContract[]>)
@@ -96,7 +100,9 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     const resolve = opts?.resolveRepoHandle ?? defaultResolveHandle(entries);
     const httpEx = new HttpRouteExtractor();
     const grpcEx = new GrpcExtractor();
+    const thriftEx = new ThriftExtractor();
     const topicEx = new TopicExtractor();
+    const includeEx = new IncludeExtractor();
     dbExecutors = new Map<string, CypherExecutor>();
     const openPoolIds: string[] = [];
 
@@ -143,8 +149,30 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
             }
           }
 
+          if (config.detect.thrift) {
+            const extracted = await thriftEx.extract(executor, handle.repoPath, handle);
+            for (const c of extracted) {
+              autoContracts.push({
+                ...c,
+                repo: groupPath,
+                service: assignService(c.symbolRef.filePath, boundaries),
+              });
+            }
+          }
+
           if (config.detect.topics) {
             const extracted = await topicEx.extract(executor, handle.repoPath, handle);
+            for (const c of extracted) {
+              autoContracts.push({
+                ...c,
+                repo: groupPath,
+                service: assignService(c.symbolRef.filePath, boundaries),
+              });
+            }
+          }
+
+          if (config.detect.includes) {
+            const extracted = await includeEx.extract(executor, handle.repoPath, handle);
             for (const c of extracted) {
               autoContracts.push({
                 ...c,
@@ -193,13 +221,15 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
       if (e) repoPaths.set(groupPath, e.path);
     }
 
-    const wsResult = await extractRustWorkspaceLinks(config.repos, repoPaths, dbExecutors);
+    const wsResult = await discoverWorkspaceLinks(config.repos, repoPaths, dbExecutors);
     if (wsResult.links.length > 0) {
       allLinks = [...allLinks, ...wsResult.links];
       if (opts?.verbose) {
-        console.log(
-          `  workspace-deps: discovered ${wsResult.links.length} cross-crate links from ${wsResult.discoveredCrates.size} Rust crates`,
-        );
+        for (const s of wsResult.stats) {
+          logger.info(
+            `  workspace-deps: discovered ${s.linkCount} cross-${s.ecosystem.toLowerCase()} links from ${s.projectCount} ${s.ecosystem} projects`,
+          );
+        }
       }
     }
   }
@@ -215,7 +245,7 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     for (const link of allLinks) {
       const dangling = [link.from, link.to].filter((r) => !knownRepos.has(r));
       if (dangling.length > 0) {
-        console.warn(
+        logger.warn(
           `[group/sync] manifest link ${link.type}:${link.contract} references repos not in config.repos: ${dangling.join(', ')} — cross-links will use synthetic UIDs`,
         );
       }
@@ -226,19 +256,21 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
     autoContracts.push(...manifestResult.contracts);
     manifestCrossLinks = manifestResult.crossLinks;
     if (opts?.verbose) {
-      console.log(
+      logger.info(
         `  manifest: ${manifestCrossLinks.length} cross-links from ${allLinks.length} links (${config.links.length} declared + ${allLinks.length - config.links.length} discovered)`,
       );
     }
   }
 
-  const { matched, unmatched } = runExactMatch(autoContracts, undefined, config.matching);
+  const providerIndex = buildProviderIndex(autoContracts, config.matching);
+  const { matched, unmatched } = runExactMatch(autoContracts, providerIndex, config.matching);
+  const wildcard = runWildcardMatch(unmatched, providerIndex);
 
   // Dedupe cross-links. Manifest contracts participate in runExactMatch, so a
   // manifest-declared link can also emit a matchType:'exact' CrossLink with the
   // same endpoints. Prefer the manifest version — it reflects operator intent
   // and carries matchType:'manifest' which downstream consumers may rely on.
-  const crossLinks = dedupeCrossLinks([...manifestCrossLinks, ...matched]);
+  const crossLinks = dedupeCrossLinks([...manifestCrossLinks, ...matched, ...wildcard.matched]);
   const allContracts: StoredContract[] = autoContracts;
 
   const registry: ContractRegistry = {
@@ -252,12 +284,34 @@ export async function syncGroup(config: GroupConfig, opts?: SyncOptions): Promis
 
   if (opts?.groupDir && !opts.skipWrite) {
     await writeContractRegistry(opts.groupDir, registry);
+    // writeBridge failure (disk full, schema error, permission denied) must
+    // not mask the registry — contracts.json was just written successfully
+    // and is the canonical source of truth. A stale or absent bridge
+    // degrades impact queries to empty results, which is recoverable on
+    // the next sync. Surface the failure as a warning so operators can
+    // act, but do not propagate it.
+    // (PR #1156 follow-up review: writeBridge error in sync.ts propagates
+    // uncaught.)
+    try {
+      await writeBridge(opts.groupDir, {
+        contracts: allContracts,
+        crossLinks,
+        repoSnapshots,
+        missingRepos,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(
+        { err: msg, groupDir: opts.groupDir },
+        '⚠️ writeBridge failed; contracts.json is intact but bridge.lbug is stale. Re-run `gitnexus group sync` to retry.',
+      );
+    }
   }
 
   return {
     contracts: allContracts,
     crossLinks,
-    unmatched,
+    unmatched: wildcard.remaining,
     missingRepos,
     repoSnapshots,
   };

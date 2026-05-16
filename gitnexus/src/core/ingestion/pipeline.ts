@@ -29,6 +29,7 @@ import {
   routesPhase,
   toolsPhase,
   ormPhase,
+  parametersPhase,
   crossFilePhase,
   scopeResolutionPhase,
   mroPhase,
@@ -65,7 +66,7 @@ export interface PipelineOptions {
  * Phase dependency graph:
  *
  *   scan → structure → [markdown, cobol] → parse → [routes, tools, orm]
- *     → crossFile → mro → communities → processes
+ *     → crossFile → scopeResolution → parameters → mro → communities → processes
  *
  * To add a new phase: create a file in pipeline-phases/, export the phase
  * object, and add it to the appropriate position in this array.
@@ -82,6 +83,7 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
     ormPhase,
     crossFilePhase,
     scopeResolutionPhase,
+    parametersPhase,
   ];
 
   if (!options?.skipGraphPhases) {

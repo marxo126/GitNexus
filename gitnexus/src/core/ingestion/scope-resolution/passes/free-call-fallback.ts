@@ -36,6 +36,10 @@ export function emitFreeCallFallback(
   handledSites: Set<string>,
   model: SemanticModel,
   workspaceIndex: WorkspaceResolutionIndex,
+  options: {
+    readonly allowGlobalFallback?: boolean;
+    readonly isFileLocalDef?: (def: SymbolDefinition) => boolean;
+  } = {},
 ): number {
   let emitted = 0;
   const seen = new Set<string>();
@@ -67,6 +71,19 @@ export function emitFreeCallFallback(
       if (fnDef === undefined) {
         fnDef = findCallableBindingInScope(site.inScope, site.name, scopes);
       }
+      // V1: pickUniqueGlobalCallable ignores import context — resolves to any
+      // globally-unique callable. False cross-package edges are possible when
+      // the caller does not import the target package. Same-package calls are
+      // caught by findCallableBindingInScope above before reaching here.
+      if (fnDef === undefined && options.allowGlobalFallback === true) {
+        fnDef = pickUniqueGlobalCallable(
+          site.name,
+          model,
+          scopes,
+          parsed.filePath,
+          options.isFileLocalDef,
+        );
+      }
       if (fnDef === undefined) continue;
       const callerGraphId = resolveCallerGraphId(site.inScope, scopes, nodeLookup);
       if (callerGraphId === undefined) continue;
@@ -88,11 +105,70 @@ export function emitFreeCallFallback(
         // Match legacy DAG's reason convention so consumers that
         // assert `reason === 'import-resolved'` keep working.
         reason: fnDef.filePath !== parsed.filePath ? 'import-resolved' : 'local-call',
+        ...(site.arity !== undefined ? { argCount: site.arity } : {}),
       });
       emitted++;
     }
   }
   return emitted;
+}
+
+function pickUniqueGlobalCallable(
+  name: string,
+  model: SemanticModel,
+  scopes: ScopeResolutionIndexes,
+  callerFilePath: string,
+  isFileLocalDef?: (def: SymbolDefinition) => boolean,
+): SymbolDefinition | undefined {
+  const scopeDefs: SymbolDefinition[] = [];
+  const scopeSeen = new Set<string>();
+  for (const def of scopes.defs.byId.values()) {
+    const simple = def.qualifiedName?.split('.').pop() ?? def.qualifiedName;
+    if (simple !== name) continue;
+    if (def.type !== 'Function' && def.type !== 'Method' && def.type !== 'Constructor') continue;
+    // Skip file-local defs (e.g. C `static` functions) that live in a
+    // different file from the caller — they are logically invisible.
+    if (isFileLocalDef !== undefined && def.filePath !== callerFilePath && isFileLocalDef(def)) {
+      continue;
+    }
+    const key = logicalCallableKey(def);
+    if (scopeSeen.has(key)) continue;
+    scopeSeen.add(key);
+    scopeDefs.push(def);
+  }
+  if (scopeDefs.length === 1) return scopeDefs[0];
+
+  const defs: SymbolDefinition[] = [];
+  const seen = new Set<string>();
+  const push = (pool: readonly SymbolDefinition[]): void => {
+    for (const def of pool) {
+      // Apply the same file-local linkage filter as Phase 1 —
+      // cross-file static defs must never leak through the
+      // SemanticModel fallback path.
+      if (isFileLocalDef !== undefined && def.filePath !== callerFilePath && isFileLocalDef(def)) {
+        continue;
+      }
+      const key = logicalCallableKey(def);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      defs.push(def);
+    }
+  };
+
+  push(model.symbols.lookupCallableByName(name));
+  push(model.methods.lookupMethodByName(name));
+
+  return defs.length === 1 ? defs[0] : undefined;
+}
+
+function logicalCallableKey(def: SymbolDefinition): string {
+  return [
+    def.filePath,
+    def.qualifiedName ?? '',
+    def.type,
+    def.parameterCount ?? '',
+    def.parameterTypes?.join(',') ?? '',
+  ].join('\0');
 }
 
 /** For a constructor call `new X(...)`, return the X class's explicit

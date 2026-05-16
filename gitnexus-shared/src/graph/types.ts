@@ -44,7 +44,8 @@ export type NodeLabel =
   | 'Template'
   | 'Section'
   | 'Route'
-  | 'Tool';
+  | 'Tool'
+  | 'Parameter';
 
 export type NodeProperties = {
   name: string;
@@ -115,7 +116,9 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  | 'PASSES_TO'
+  | 'DATA_FLOWS_TO';
 
 export interface GraphNode {
   id: string;
@@ -131,6 +134,13 @@ export interface GraphRelationship {
   confidence: number;
   reason: string;
   step?: number;
+  /**
+   * Argument count at the call-site for CALLS edges. Populated by
+   * call-processor when the language extractor emits an `argCount` and
+   * consumed by parameter-flow synthesis to position-match call args to
+   * callee parameters. In-memory only — not persisted to LadybugDB CSV.
+   */
+  argCount?: number;
   /**
    * Per-signal evidence trace for edges emitted by the scope-based
    * resolution pipeline (RFC #909 Ring 2 PKG #925). Populated by

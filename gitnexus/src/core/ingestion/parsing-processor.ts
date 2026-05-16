@@ -5,12 +5,11 @@ import { loadParser, loadLanguage, isLanguageAvailable } from '../tree-sitter/pa
 import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
 import type { SymbolTableReader, SymbolTableWriter, ExtractedHeritage } from './model/index.js';
-// SymbolTableReader is used for the FieldExtractorContext stub; the
-// parsing functions themselves need Writer because they call .add().
 import { ASTCache } from './ast-cache.js';
 import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
 import { extractVueScript, isVueSetupTopLevel } from './vue-sfc-extractor.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
+import { parseSourceSafe } from '../tree-sitter/safe-parse.js';
 import { isVerboseIngestionEnabled } from './utils/verbose.js';
 import {
   getDefinitionNodeFromCaptures,
@@ -34,6 +33,7 @@ import {
 import type { LanguageProvider } from './language-provider.js';
 import type { ParsedFile } from 'gitnexus-shared';
 import { WorkerPool } from './workers/worker-pool.js';
+import { logger } from '../logger.js';
 import type {
   ParseWorkerResult,
   ParseWorkerInput,
@@ -47,6 +47,7 @@ import type {
   FileConstructorBindings,
   FileScopeBindings,
   ExtractedORMQuery,
+  ExtractedParameter,
 } from './workers/parse-worker.js';
 import {
   getTreeSitterBufferSize,
@@ -66,6 +67,7 @@ export interface WorkerExtractedData {
   decoratorRoutes: ExtractedDecoratorRoute[];
   toolDefs: ExtractedToolDef[];
   ormQueries: ExtractedORMQuery[];
+  parameters: ExtractedParameter[];
   constructorBindings: FileConstructorBindings[];
   fileScopeBindings: FileScopeBindings[];
   /**
@@ -108,6 +110,7 @@ const processParsingWithWorkers = async (
       decoratorRoutes: [],
       toolDefs: [],
       ormQueries: [],
+      parameters: [],
       constructorBindings: [],
       fileScopeBindings: [],
       parsedFiles: [],
@@ -133,6 +136,7 @@ const processParsingWithWorkers = async (
   const allDecoratorRoutes: ExtractedDecoratorRoute[] = [];
   const allToolDefs: ExtractedToolDef[] = [];
   const allORMQueries: ExtractedORMQuery[] = [];
+  const allParameters: ExtractedParameter[] = [];
   const allConstructorBindings: FileConstructorBindings[] = [];
   const fileScopeBindingsByFile: FileScopeBindings[] = [];
   const allParsedFiles: ParsedFile[] = [];
@@ -170,6 +174,7 @@ const processParsingWithWorkers = async (
     for (const item of result.decoratorRoutes) allDecoratorRoutes.push(item);
     for (const item of result.toolDefs) allToolDefs.push(item);
     if (result.ormQueries) for (const item of result.ormQueries) allORMQueries.push(item);
+    if (result.parameters) for (const item of result.parameters) allParameters.push(item);
     for (const item of result.constructorBindings) allConstructorBindings.push(item);
     if (result.fileScopeBindings)
       for (const item of result.fileScopeBindings) fileScopeBindingsByFile.push(item);
@@ -191,7 +196,7 @@ const processParsingWithWorkers = async (
     const summary = Array.from(skippedLanguages.entries())
       .map(([lang, count]) => `${lang}: ${count}`)
       .join(', ');
-    console.warn(`  Skipped unsupported languages: ${summary}`);
+    logger.warn(`  Skipped unsupported languages: ${summary}`);
   }
 
   // Final progress
@@ -206,6 +211,7 @@ const processParsingWithWorkers = async (
     decoratorRoutes: allDecoratorRoutes,
     toolDefs: allToolDefs,
     ormQueries: allORMQueries,
+    parameters: allParameters,
     constructorBindings: allConstructorBindings,
     fileScopeBindings: fileScopeBindingsByFile,
     parsedFiles: allParsedFiles,
@@ -325,6 +331,7 @@ const processParsingSequential = async (
   astCache: ASTCache,
   scopeTreeCache: ASTCache | undefined,
   onFileProgress?: FileProgressCallback,
+  parametersOut?: ExtractedParameter[],
 ) => {
   const parser = await loadParser();
   const total = files.length;
@@ -370,6 +377,11 @@ const processParsingSequential = async (
       isVueSetup = extracted.isSetup;
     }
 
+    // Per-language source-text transform (e.g., UE macro stripping for C++).
+    // Length-preserving — see LanguageProvider.preprocessSource contract.
+    parseContent =
+      getProvider(language).preprocessSource?.(parseContent, file.path) ?? parseContent;
+
     try {
       await loadLanguage(language, file.path);
     } catch {
@@ -378,11 +390,11 @@ const processParsingSequential = async (
 
     let tree: Parser.Tree;
     try {
-      tree = parser.parse(parseContent, undefined, {
+      tree = parseSourceSafe(parser, parseContent, undefined, {
         bufferSize: getTreeSitterBufferSize(parseContent),
       });
     } catch (parseError) {
-      console.warn(`Skipping unparseable file: ${file.path}`);
+      logger.warn(`Skipping unparseable file: ${file.path}`);
       continue;
     }
 
@@ -408,7 +420,7 @@ const processParsingSequential = async (
       query = new Parser.Query(language, queryString);
       matches = query.matches(tree.rootNode);
     } catch (queryError) {
-      console.warn(`Query error for ${file.path}:`, queryError);
+      logger.warn({ queryError }, `Query error for ${file.path}:`);
       continue;
     }
 
@@ -537,6 +549,7 @@ const processParsingSequential = async (
               enriched = true;
               arityForId = arityForIdFromInfo(info);
               methodProps = buildMethodProps(info);
+              seqDefMethodInfo = info;
             }
           }
         }
@@ -620,6 +633,31 @@ const processParsingSequential = async (
 
       graph.addNode(node);
 
+      // Capture parameters from the same MethodInfo used for node enrichment so the
+      // sequential path emits ExtractedParameter records consistent with the worker path.
+      if (
+        parametersOut &&
+        seqDefMethodInfo &&
+        (nodeLabel === 'Function' || nodeLabel === 'Method' || nodeLabel === 'Constructor')
+      ) {
+        const paramLine = definitionNode
+          ? definitionNode.startPosition.row + lineOffset
+          : startLine;
+        for (let i = 0; i < seqDefMethodInfo.parameters.length; i++) {
+          const p = seqDefMethodInfo.parameters[i];
+          if (!p.name) continue;
+          parametersOut.push({
+            ownerId: nodeId,
+            name: p.name,
+            paramIndex: i,
+            declaredType: p.rawType ?? p.type ?? '',
+            isRest: p.isVariadic,
+            filePath: file.path,
+            line: paramLine,
+          });
+        }
+      }
+
       // enclosingClassId already computed above (before nodeId generation)
 
       // Extract declared type and field metadata for Property nodes
@@ -701,7 +739,7 @@ const processParsingSequential = async (
 
   if (skippedByLang && skippedByLang.size > 0) {
     for (const [lang, count] of skippedByLang.entries()) {
-      console.warn(
+      logger.warn(
         `[ingestion] Skipped ${count} ${lang} file(s) in parsing processing — ${lang} parser not available.`,
       );
     }
@@ -727,6 +765,13 @@ export const processParsing = async (
   scopeTreeCache: ASTCache | undefined,
   onFileProgress?: FileProgressCallback,
   workerPool?: WorkerPool,
+  /**
+   * Mutable accumulator the sequential path pushes ExtractedParameter records
+   * into so callers can collect parameter data even when no worker pool is
+   * used. Worker-pool runs surface this data via the returned WorkerExtractedData
+   * instead; passing this array is harmless on the worker path (it stays empty).
+   */
+  sequentialParametersOut?: ExtractedParameter[],
 ): Promise<WorkerExtractedData | null> => {
   let lastProgress = 0;
   const reportProgress: FileProgressCallback | undefined = onFileProgress
@@ -742,7 +787,7 @@ export const processParsing = async (
       // in scope-resolution with an empty cache and get re-parsed.
       // Surfacing this in PROF mode prevents silent perf cliffs when
       // a repo crosses the worker-pool threshold.
-      console.warn(
+      logger.warn(
         `[scope-resolution prof] worker pool engaged for ${files.length} files — cross-phase tree cache will be empty; scope-resolution re-parses.`,
       );
     }
@@ -757,7 +802,7 @@ export const processParsing = async (
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn('Worker pool parsing stopped; continuing with sequential parser:', message);
+      logger.warn({ message }, 'Worker pool parsing stopped; continuing with sequential parser:');
       reportProgress?.(
         lastProgress,
         files.length,
@@ -774,6 +819,7 @@ export const processParsing = async (
     astCache,
     scopeTreeCache,
     reportProgress,
+    sequentialParametersOut,
   );
   return null;
 };

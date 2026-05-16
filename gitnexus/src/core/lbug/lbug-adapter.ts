@@ -19,11 +19,15 @@ import type { CachedEmbedding } from '../embeddings/types.js';
 import { extensionManager, type ExtensionEnsureOptions } from './extension-loader.js';
 import {
   closeLbugConnection,
+  isDbBusyError,
+  isOpenRetryExhausted,
   openLbugConnection,
+  waitForWindowsHandleRelease,
   type LbugConnectionHandle,
 } from './lbug-config.js';
 import { isVectorExtensionSupportedByPlatform } from '../platform/capabilities.js';
 
+import { logger } from '../logger.js';
 // ---------------------------------------------------------------------------
 // Relationship CSV splitting — extracted for testability (PR #818)
 // ---------------------------------------------------------------------------
@@ -185,21 +189,6 @@ const DB_LOCK_RETRY_ATTEMPTS = 3;
 const DB_LOCK_RETRY_DELAY_MS = 500;
 
 /**
- * Return true when the error message indicates that another process holds
- * an exclusive lock on the LadybugDB file (e.g. `gitnexus analyze` or
- * `gitnexus serve` running at the same time).
- */
-export const isDbBusyError = (err: unknown): boolean => {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return (
-    msg.includes('busy') ||
-    msg.includes('lock') ||
-    msg.includes('already in use') ||
-    msg.includes('could not set lock')
-  );
-};
-
-/**
  * Return true when the error message indicates a write was attempted against
  * a read-only LadybugDB connection. The MCP query pool opens DBs read-only,
  * so any path that calls a `CREATE_*` procedure there will surface this
@@ -251,24 +240,17 @@ export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>)
       });
     } catch (err) {
       lastError = err;
-      if (!isDbBusyError(err) || attempt === DB_LOCK_RETRY_ATTEMPTS) {
+      // Skip outer retry when the inner open-retry already exhausted: the
+      // ~1.5s open-time budget was just spent, repeating the full reset+
+      // reopen cycle would only add 4-5s of tail latency without changing
+      // the outcome (both layers consult the same isDbBusyError matcher).
+      if (!isDbBusyError(err) || isOpenRetryExhausted(err) || attempt === DB_LOCK_RETRY_ATTEMPTS) {
         throw err;
       }
       // Close stale connection inside the session lock to prevent race conditions
       // with concurrent operations that might acquire the lock between cleanup steps
       await runWithSessionLock(async () => {
-        try {
-          if (conn) await conn.close();
-        } catch {
-          /* best-effort */
-        }
-        try {
-          if (db) await db.close();
-        } catch {
-          /* best-effort */
-        }
-        conn = null;
-        db = null;
+        await safeClose();
         currentDbPath = null;
         ftsLoaded = false;
         vectorExtensionLoaded = false;
@@ -294,14 +276,7 @@ const ensureLbugInitialized = async (dbPath: string) => {
 const doInitLbug = async (dbPath: string) => {
   // Different database requested — close the old one first
   if (conn || db) {
-    try {
-      if (conn) await conn.close();
-    } catch {}
-    try {
-      if (db) await db.close();
-    } catch {}
-    conn = null;
-    db = null;
+    await safeClose();
     currentDbPath = null;
     ftsLoaded = false;
     vectorExtensionLoaded = false;
@@ -347,8 +322,17 @@ const doInitLbug = async (dbPath: string) => {
       await conn.query(schemaQuery);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('already exists')) {
-        console.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
+      // Suppression list:
+      //   - "already exists": expected idempotent re-create on existing DBs
+      //   - "could not set lock on file": LadybugDB v0.16.1 emits this on
+      //     Windows when CREATE NODE TABLE runs against a path that was
+      //     just opened (the WAL handle from a fresh Database briefly
+      //     contests the table's first-write lock). The table is created
+      //     anyway and any genuine cross-process lock contention surfaces
+      //     on the next operation via withLbugDb's retry. Logging it here
+      //     would just be noise in CI.
+      if (!msg.includes('already exists') && !isDbBusyError(err)) {
+        logger.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
       }
     }
   }
@@ -621,8 +605,14 @@ const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   if (table === 'Tool') {
     return `COPY ${t}(id, name, filePath, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'Parameter') {
+    return `COPY ${t}(id, name, filePath, paramIndex, declaredType, isRest) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   if (table === 'Method') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
+  if (table === 'Property') {
+    return `COPY ${t}(id, name, filePath, startLine, endLine, content, description, declaredType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
   // TypeScript/JS code element tables have isExported; multi-language tables do not
   if (TABLES_WITH_EXPORTED.has(table)) {
@@ -670,11 +660,18 @@ export const insertNodeToLbug = async (
         ? `, description: ${escapeValue(properties.description)}`
         : '';
       query = `CREATE (n:Section {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, level: ${properties.level || 1}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+    } else if (label === 'Parameter') {
+      query = `CREATE (n:Parameter {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, paramIndex: ${properties.paramIndex || 0}, declaredType: ${escapeValue(properties.declaredType || '')}, isRest: ${!!properties.isRest}})`;
     } else if (TABLES_WITH_EXPORTED.has(label)) {
       const descPart = properties.description
         ? `, description: ${escapeValue(properties.description)}`
         : '';
       query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, isExported: ${!!properties.isExported}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+    } else if (label === 'Property') {
+      const descPart = properties.description
+        ? `, description: ${escapeValue(properties.description)}`
+        : '';
+      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, content: ${escapeValue(properties.content || '')}${descPart}, declaredType: ${escapeValue(properties.declaredType || '')}})`;
     } else {
       // Multi-language tables (Struct, Impl, Trait, Macro, etc.) — no isExported
       const descPart = properties.description
@@ -701,7 +698,7 @@ export const insertNodeToLbug = async (
     return false;
   } catch (e: any) {
     // Node may already exist or other error
-    console.error(`Failed to insert ${label} node:`, e.message);
+    logger.error({ err: e.message }, `Failed to insert ${label} node:`);
     return false;
   }
 };
@@ -748,11 +745,18 @@ export const batchInsertNodesToLbug = async (
             ? `, n.description = ${escapeValue(properties.description)}`
             : '';
           query = `MERGE (n:Section {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.level = ${properties.level || 1}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+        } else if (label === 'Parameter') {
+          query = `MERGE (n:Parameter {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.paramIndex = ${properties.paramIndex || 0}, n.declaredType = ${escapeValue(properties.declaredType || '')}, n.isRest = ${!!properties.isRest}`;
         } else if (TABLES_WITH_EXPORTED.has(label)) {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
             : '';
           query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.isExported = ${!!properties.isExported}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+        } else if (label === 'Property') {
+          const descPart = properties.description
+            ? `, n.description = ${escapeValue(properties.description)}`
+            : '';
+          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.content = ${escapeValue(properties.content || '')}${descPart}, n.declaredType = ${escapeValue(properties.declaredType || '')}`;
         } else {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
@@ -1028,14 +1032,14 @@ export const fetchExistingEmbeddingHashes = async (
           const nodeId = r.nodeId ?? r[0];
           if (nodeId) map.set(nodeId, STALE_HASH_SENTINEL);
         }
-        console.log(
+        logger.info(
           `[embed] ${map.size} nodes in legacy DB (missing chunk-aware columns) — all treated as stale`,
         );
         return map;
       } catch (fallbackErr: any) {
         const fallbackMsg = fallbackErr?.message ?? '';
         if (isMissingColumnOrTableError(fallbackMsg)) {
-          console.log(
+          logger.info(
             `[embed] CodeEmbedding table not yet present — full embedding run (${fallbackMsg})`,
           );
           return undefined;
@@ -1047,19 +1051,83 @@ export const fetchExistingEmbeddingHashes = async (
   }
 };
 
-export const closeLbug = async (): Promise<void> => {
+/**
+ * Flush the WAL so all pending writes are visible to subsequent readers.
+ *
+ * Best-effort: swallows errors from older LadybugDB versions or schemaless
+ * databases that do not support the CHECKPOINT command.  A no-op when there
+ * is nothing pending, so safe (and cheap) to call unconditionally after any
+ * write path.
+ *
+ * Use this instead of safeClose when the connection must stay open
+ * (e.g. the /api/embed handler that keeps serving queries after flushing).
+ *
+ * @see safeClose — CHECKPOINT + connection/database close
+ */
+export const flushWAL = async (): Promise<void> => {
+  if (!conn) return;
+  try {
+    await conn.query('CHECKPOINT');
+  } catch {
+    /* ignore — older LadybugDB or schemaless DB may not accept it */
+  }
+};
+
+/**
+ * Flush the WAL and close the connection and database handles.
+ *
+ * Consolidates the CHECKPOINT + close pattern into a single function so
+ * callers never call conn.close() or db.close() directly (#1376).
+ * An ESLint no-restricted-syntax rule enforces this — see eslint.config.mjs.
+ *
+ * @see flushWAL — CHECKPOINT-only (connection stays open)
+ * @see closeLbug — safeClose + module state reset (full teardown)
+ */
+export const safeClose = async (): Promise<void> => {
+  await flushWAL();
+  // Capture before close — currentDbPath stays set so the Windows post-close
+  // probe below knows which file to wait on.
+  const closingDbPath = currentDbPath;
   if (conn) {
     try {
+      // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await conn.close();
-    } catch {}
+    } catch {
+      /* best-effort */
+    }
     conn = null;
   }
   if (db) {
     try {
+      // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await db.close();
-    } catch {}
+    } catch {
+      /* best-effort */
+    }
     db = null;
   }
+  // Windows: libuv reports `db.close()` resolved before the kernel has
+  // released the file handle. A subsequent `new Database(samePath)` in
+  // the same process can race the release. The probe (lbug-config.ts)
+  // forces any residual lock to surface as EBUSY/EPERM/EACCES so the
+  // open-time retry absorbs the lag.
+  if (process.platform === 'win32' && closingDbPath) {
+    const released = await waitForWindowsHandleRelease(closingDbPath);
+    if (!released) {
+      // Probe exhausted with a lock code still in flight. The next
+      // openLbugConnection will absorb whatever residual lag remains, but
+      // a chronic warning helps operators spot AV interference (Windows
+      // Defender holding the file far past the 250ms budget).
+      logger.warn(
+        { dbPath: closingDbPath },
+        '⚠️ LadybugDB file handle still locked after close (Windows). If this repeats, check antivirus/Defender exclusions for the GitNexus storage directory.',
+      );
+    }
+  }
+};
+
+export const closeLbug = async (): Promise<void> => {
+  await safeClose();
   currentDbPath = null;
   ftsLoaded = false;
   vectorExtensionLoaded = false;
@@ -1187,6 +1255,13 @@ export const loadVectorExtension = async (
 ): Promise<boolean> => {
   const useModuleState = targetConn === undefined;
   if (useModuleState && vectorExtensionLoaded) return true;
+  // INSTALL VECTOR crashes with SIGSEGV on Windows: the KuzuDB native extension
+  // installer has an unhandled error path on Windows that raises a fatal signal
+  // that JS try/catch cannot intercept. Skip loading — vector/embedding search
+  // is unavailable but all graph index queries still work. Do NOT set
+  // vectorExtensionLoaded here: the flag means "successfully loaded", and a
+  // subsequent call would otherwise short-circuit to `return true` at the top.
+  if (process.platform === 'win32') return false;
   if (!isVectorExtensionSupportedByPlatform()) return false;
 
   const c: lbug.Connection | null = targetConn ?? conn;
